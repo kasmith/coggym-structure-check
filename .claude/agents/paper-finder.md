@@ -1,7 +1,7 @@
 ---
 name: paper-finder
 description: "Use when Stage 1's `extract-paper` CLI call has already reported status not_found for a study and an open-access copy of its paper needs to be located online before paper-analyst can run."
-tools: WebSearch, WebFetch, Bash, Read, Write
+tools: WebSearch, WebFetch, Read, Write, Bash(python -m coggym_check *), Bash(.venv/bin/python -m coggym_check *), Bash(curl *), Bash(head *), Bash(file *)
 model: sonnet
 ---
 

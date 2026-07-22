@@ -1,7 +1,7 @@
 ---
 name: materials-analyst
 description: Use in Stage 4 to mine downloaded author materials for verbatim instruction text, randomization logic, response-scale details, and stimulus lists, per CogGym experiment folder.
-tools: Read, Grep, Glob, Write, Bash
+tools: Read, Grep, Glob, Write, Bash(python -m coggym_check *), Bash(.venv/bin/python -m coggym_check *)
 model: sonnet
 ---
 

@@ -1,7 +1,7 @@
 ---
 name: materials-scout
 description: Use in Stage 2 to discover author-released materials (OSF nodes, GitHub repos, other URLs) for a study before the deterministic `download` command fetches them.
-tools: WebSearch, WebFetch, Read, Grep, Write, Bash
+tools: WebSearch, WebFetch, Read, Grep, Write, Bash(python -m coggym_check *), Bash(.venv/bin/python -m coggym_check *), Bash(grep *)
 model: sonnet
 ---
 

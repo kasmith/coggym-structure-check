@@ -32,16 +32,34 @@ FIXTURES = Path(__file__).parent / "fixtures"
 #: Exact tools/model per real agent file — pinned so a round-trip test
 #: catches any drift in the checked-in frontmatter, not just "parses without
 #: crashing."
+#: Every scoped Bash specifier that's meant to replace bare `Bash` in
+#: frontmatter (Finding 3, whole-branch review: bare `Bash` becomes a
+#: blanket `--allowedTools Bash` in headless mode). Every agent gets at
+#: least these two (its own `python -m coggym_check` calls); some get more.
+_CLI_BASH_TOOLS = ["Bash(python -m coggym_check *)", "Bash(.venv/bin/python -m coggym_check *)"]
+
 _EXPECTED_AGENTS: dict[str, tuple[list[str], str]] = {
-    "fix-drafter": (["Read", "Write", "Bash"], "sonnet"),
-    "materials-analyst": (["Read", "Grep", "Glob", "Write", "Bash"], "sonnet"),
+    "fix-drafter": (["Read", "Write", *_CLI_BASH_TOOLS], "sonnet"),
+    "materials-analyst": (["Read", "Grep", "Glob", "Write", *_CLI_BASH_TOOLS], "sonnet"),
     "materials-scout": (
-        ["WebSearch", "WebFetch", "Read", "Grep", "Write", "Bash"],
+        ["WebSearch", "WebFetch", "Read", "Grep", "Write", *_CLI_BASH_TOOLS, "Bash(grep *)"],
         "sonnet",
     ),
-    "paper-analyst": (["Read", "Grep", "Glob", "Write", "Bash"], "opus"),
-    "paper-finder": (["WebSearch", "WebFetch", "Bash", "Read", "Write"], "sonnet"),
-    "structure-comparator": (["Read", "Grep", "Write", "Bash"], "opus"),
+    "paper-analyst": (["Read", "Grep", "Glob", "Write", *_CLI_BASH_TOOLS], "opus"),
+    "paper-finder": (
+        [
+            "WebSearch",
+            "WebFetch",
+            "Read",
+            "Write",
+            *_CLI_BASH_TOOLS,
+            "Bash(curl *)",
+            "Bash(head *)",
+            "Bash(file *)",
+        ],
+        "sonnet",
+    ),
+    "structure-comparator": (["Read", "Grep", "Write", *_CLI_BASH_TOOLS], "opus"),
 }
 
 
@@ -71,6 +89,20 @@ def test_parse_agent_file_round_trip(name: str) -> None:
     assert "\ntools:" not in spec.body
     assert "\nmodel:" not in spec.body
     assert not spec.body.lstrip().startswith("---")
+
+
+@pytest.mark.parametrize("name", sorted(_EXPECTED_AGENTS))
+def test_no_scoped_bash_specifier_contains_a_comma(name: str) -> None:
+    """Finding 3 (whole-branch review): `build_claude_command` joins
+    `agent.tools` with `,` for `--allowedTools`. If any scoped specifier
+    (e.g. `Bash(python -m coggym_check *)`) contained a literal comma, that
+    join would silently split one specifier into two garbled ones. Assert
+    the round trip holds for every real agent file: splitting the joined
+    `--allowedTools` string on `,` reproduces the exact original tools list."""
+    spec = headless.parse_agent_file(AGENTS_DIR / f"{name}.md")
+    cmd = headless.build_claude_command(spec, "prompt", 60)
+    allowed_tools_value = cmd[cmd.index("--allowedTools") + 1]
+    assert allowed_tools_value.split(",") == spec.tools
 
 
 def test_parse_agent_file_paper_finder_description_quoted_colon_safe() -> None:

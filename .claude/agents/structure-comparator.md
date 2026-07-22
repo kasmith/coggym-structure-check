@@ -1,7 +1,7 @@
 ---
 name: structure-comparator
 description: Use in Stage 5 to compare paper/materials evidence against the CogGym implementation field-by-field and produce discrepancies, confirmations, and fix recommendations.
-tools: Read, Grep, Write, Bash
+tools: Read, Grep, Write, Bash(python -m coggym_check *), Bash(.venv/bin/python -m coggym_check *)
 model: opus
 ---
 

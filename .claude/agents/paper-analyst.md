@@ -1,7 +1,7 @@
 ---
 name: paper-analyst
 description: Use in Stage 3 to extract each paper-described experiment's structure from the study's paper text and map it to CogGym experiment folders.
-tools: Read, Grep, Glob, Write, Bash
+tools: Read, Grep, Glob, Write, Bash(python -m coggym_check *), Bash(.venv/bin/python -m coggym_check *)
 model: opus
 ---
 

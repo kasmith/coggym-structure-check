@@ -1,7 +1,7 @@
 ---
 name: fix-drafter
 description: Use in Stage 6 to turn clear-cut, fix-recommended discrepancies into an applied fix branch, a rendered report, and a PR draft.
-tools: Read, Write, Bash
+tools: Read, Write, Bash(python -m coggym_check *), Bash(.venv/bin/python -m coggym_check *)
 model: sonnet
 ---
 
