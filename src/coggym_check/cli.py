@@ -3,9 +3,9 @@
 Why stubs remain for most subcommands: each pipeline stage (snapshot, lint,
 paper extraction, materials download, etc.) is implemented in its own task
 so the entrypoint doesn't need renegotiating each time. `validate-artifact`,
-`export-schemas` (task 2), and `snapshot` (task 3, dataset.py) are real
-here; every other subcommand is still a placeholder until its corresponding
-task lands.
+`export-schemas` (task 2), `snapshot` (task 3, dataset.py), `lint` (task 4,
+lint.py), and `init-run` (task 5, rundir.py) are real here; every other
+subcommand is still a placeholder until its corresponding task lands.
 
 Why proper subparsers instead of the REMAINDER-stub pattern for these:
 they have real, differing argument signatures (a positional path; an
@@ -24,14 +24,13 @@ from typing import Sequence
 
 from pydantic import ValidationError
 
-from coggym_check import config, dataset, lint, schemas
+from coggym_check import config, dataset, lint, rundir, schemas
 
 #: Pipeline-stage subcommands with no implementation yet (see
 #: constraints.md's stage table). Each prints "not implemented" and exits 2.
 STUB_SUBCOMMANDS = (
     "extract-paper",
     "download",
-    "init-run",
     "render",
     "apply-fixes",
     "run",
@@ -80,22 +79,6 @@ def _cmd_validate_artifact(args: argparse.Namespace) -> int:
     return 0
 
 
-def _run_dir_for(study: str, commit: str | None) -> Path:
-    """Return (creating if absent) `runs/<study>` or `runs/<study>@<shortsha>`.
-
-    Minimal placeholder for run-dir creation (constraints.md hard rule #10:
-    `runs/<study>[@<shortsha>]/`, shortsha = first 9 chars). Task 5's
-    `rundir.py` will absorb this into full stage-status lifecycle
-    management (`init-run`, `stage_status`, `record_stage`); this helper
-    deliberately does nothing beyond "make the directory exist" so it's
-    trivial to replace.
-    """
-    name = study if commit is None else f"{study}@{commit[:9]}"
-    run_dir = config.runs_dir() / name
-    run_dir.mkdir(parents=True, exist_ok=True)
-    return run_dir
-
-
 def _cmd_snapshot(args: argparse.Namespace) -> int:
     """Parse a study into a `StudySnapshot` and write `study_snapshot.json`.
 
@@ -115,7 +98,7 @@ def _cmd_snapshot(args: argparse.Namespace) -> int:
     payload = snapshot.model_dump_json(indent=2)
     schemas.StudySnapshot.model_validate_json(payload)
 
-    run_dir = _run_dir_for(snapshot.study, args.commit)
+    run_dir = rundir.run_dir_for(snapshot.study, args.commit)
     (run_dir / "study_snapshot.json").write_text(payload)
     print(str(run_dir))
     return 0
@@ -165,13 +148,43 @@ def _cmd_lint(args: argparse.Namespace) -> int:
     payload = report.model_dump_json(indent=2)
     schemas.LintReport.model_validate_json(payload)
 
-    run_dir = _run_dir_for(report.study, args.commit)
+    run_dir = rundir.run_dir_for(report.study, args.commit)
     (run_dir / "lint.json").write_text(payload)
 
     _print_findings_table(report)
     print(str(run_dir))
 
     return 1 if any(f.level == "error" for f in report.findings) else 0
+
+
+def _print_stage_status_table(statuses: dict[str, str]) -> None:
+    """Print `stage_status`'s result as a plain aligned table, in pipeline order."""
+    header = ("STAGE", "STATUS", "ARTIFACT")
+    rows = [
+        (stage, statuses[stage], rundir.STAGE_REGISTRY[stage].artifact)
+        for stage in rundir.STAGE_REGISTRY
+    ]
+    widths = [max(len(row[i]) for row in [header, *rows]) for i in range(len(header))]
+
+    def _fmt(row: tuple[str, str, str]) -> str:
+        return "  ".join(cell.ljust(width) for cell, width in zip(row, widths))
+
+    print(_fmt(header))
+    for row in rows:
+        print(_fmt(row))
+
+
+def _cmd_init_run(args: argparse.Namespace) -> int:
+    """Create (or reuse) a run dir + `run_meta.json`, then print its stage table.
+
+    Idempotent per rundir.init_run: an existing `run_meta.json` is never
+    overwritten, so re-running this against an in-progress run dir just
+    reports current status.
+    """
+    run_dir = rundir.init_run(args.study, args.commit)
+    _print_stage_status_table(rundir.stage_status(run_dir))
+    print(str(run_dir))
+    return 0
 
 
 def _cmd_export_schemas(args: argparse.Namespace) -> int:
@@ -223,6 +236,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Pin to a datasets-repo commit (reads via `git show`, never checks out).",
     )
     lint_parser.set_defaults(func=_cmd_lint)
+
+    init_run_parser = subparsers.add_parser(
+        "init-run",
+        help="Create (or reuse) a run dir + run_meta.json and print its stage status table.",
+    )
+    init_run_parser.add_argument("study", help="Study folder name under studies/.")
+    init_run_parser.add_argument(
+        "--commit",
+        default=None,
+        help="Pin to a datasets-repo commit (run dir becomes runs/<study>@<shortsha>).",
+    )
+    init_run_parser.set_defaults(func=_cmd_init_run)
 
     validate_parser = subparsers.add_parser(
         "validate-artifact",
