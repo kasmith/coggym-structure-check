@@ -214,6 +214,107 @@ def test_osf_bare_url_without_scheme_also_resolves_node_id(
 
 
 # ---------------------------------------------------------------------------
+# OSF: hostile `name` from remote JSON -- path traversal / containment
+# ---------------------------------------------------------------------------
+
+
+def test_osf_entry_with_absolute_name_does_not_escape_materials_dir(
+    fake_requests: dict, materials_root: Path, tmp_path: Path
+) -> None:
+    """An OSF `attributes.name` that is itself an absolute path must not be
+    joined verbatim onto `dest_dir` -- `pathlib` resets to the absolute RHS
+    on `/`, so unsanitized this writes wherever the remote JSON says to."""
+    escape_target = tmp_path / "escaped-outside" / "evil.txt"
+    node_id = "evil1"
+    root_url = f"https://api.osf.io/v2/nodes/{node_id}/files/osfstorage/"
+    dl_url = "https://osf.io/download/evil.txt"
+    fake_requests[root_url] = FakeResponse(
+        json_data={
+            "data": [_osf_entry(str(escape_target), kind="file", download=dl_url)],
+            "links": {"next": None},
+        }
+    )
+    fake_requests[dl_url] = _content_response(b"pwned")
+    manifest = schemas.MaterialsManifest(
+        study=STUDY,
+        status="found",
+        searches=[],
+        sources=[_osf_source(url=f"https://osf.io/{node_id}/")],
+        notes=[],
+    )
+
+    updated = materials.download_manifest(manifest)
+
+    assert not escape_target.exists()
+    assert updated.sources[0].download_status == "failed"
+
+
+def test_osf_entry_with_dotdot_name_does_not_escape_study_materials_dir(
+    fake_requests: dict, materials_root: Path
+) -> None:
+    """A relative `../` name must not be allowed to climb out of the OSF
+    node's destination directory (here: three levels up from
+    materials/<study>/osf/<node_id>, landing outside materials/<study>/)."""
+    escape_target = materials_root / "escaped" / "evil.txt"
+    node_id = "evil2"
+    root_url = f"https://api.osf.io/v2/nodes/{node_id}/files/osfstorage/"
+    dl_url = "https://osf.io/download/evil2.txt"
+    fake_requests[root_url] = FakeResponse(
+        json_data={
+            "data": [
+                _osf_entry("../../../escaped/evil.txt", kind="file", download=dl_url)
+            ],
+            "links": {"next": None},
+        }
+    )
+    fake_requests[dl_url] = _content_response(b"pwned")
+    manifest = schemas.MaterialsManifest(
+        study=STUDY,
+        status="found",
+        searches=[],
+        sources=[_osf_source(url=f"https://osf.io/{node_id}/")],
+        notes=[],
+    )
+
+    updated = materials.download_manifest(manifest)
+
+    assert not escape_target.exists()
+    assert updated.sources[0].download_status == "failed"
+
+
+def test_osf_entry_with_traversal_in_folder_name_does_not_recurse_unsafely(
+    fake_requests: dict, materials_root: Path
+) -> None:
+    """A hostile folder `name` must be sanitized the same as a file name --
+    otherwise every file recursed into under it inherits the escaping
+    prefix. The malicious folder's listing URL is deliberately left
+    unwired: if the (unsafe) folder is recursed into anyway, the fake
+    `requests.get` raises `AssertionError` for the unexpected request,
+    which is the "crash" half of "demonstrate the escape or crash"."""
+    node_id = "evil3"
+    root_url = f"https://api.osf.io/v2/nodes/{node_id}/files/osfstorage/"
+    bad_folder_url = f"https://api.osf.io/v2/nodes/{node_id}/files/osfstorage/dotdot/"
+    fake_requests[root_url] = FakeResponse(
+        json_data={
+            "data": [_osf_entry("..", kind="folder", related=bad_folder_url)],
+            "links": {"next": None},
+        }
+    )
+    manifest = schemas.MaterialsManifest(
+        study=STUDY,
+        status="found",
+        searches=[],
+        sources=[_osf_source(url=f"https://osf.io/{node_id}/")],
+        notes=[],
+    )
+
+    updated = materials.download_manifest(manifest)
+
+    # The malicious folder must never have been recursed into.
+    assert updated.sources[0].download_status == "failed"
+
+
+# ---------------------------------------------------------------------------
 # OSF: size cap via Content-Length
 # ---------------------------------------------------------------------------
 
@@ -363,6 +464,36 @@ def test_other_url_404_marks_failed_without_raising(
     assert updated.sources[0].download_status == "failed"
 
 
+def test_other_url_ending_in_dotdot_falls_back_to_safe_name(
+    fake_requests: dict, materials_root: Path
+) -> None:
+    """A URL whose path basename is literally `..` (e.g. ends in `/..`) must
+    fall back to a safe filename instead of writing one level up."""
+    url = "https://example.com/some/dir/.."
+    content = b"some bytes"
+    fake_requests[url] = _content_response(content)
+    source = schemas.MaterialsSource(
+        kind="other_url",
+        url=url,
+        relation="uncertain",
+        evidence="",
+        local_path=None,
+        download_status="pending",
+        sha256_or_commit=None,
+    )
+    manifest = schemas.MaterialsManifest(
+        study=STUDY, status="found", searches=[], sources=[source], notes=[]
+    )
+
+    updated = materials.download_manifest(manifest)
+
+    assert updated.sources[0].download_status == "ok"
+    assert updated.sources[0].local_path == f"materials/{STUDY}/other/download.bin"
+    assert (materials_root / STUDY / "other" / "download.bin").read_bytes() == content
+    # Nothing was written outside the study's "other" dir.
+    assert list((materials_root / STUDY).iterdir()) == [materials_root / STUDY / "other"]
+
+
 def test_other_url_falls_back_to_download_bin_when_no_basename(
     fake_requests: dict, materials_root: Path
 ) -> None:
@@ -457,6 +588,22 @@ def test_github_clone_records_head_commit_and_backfills_manifest(
     ).stdout.strip()
     assert source.sha256_or_commit == expected_head
     assert len(source.sha256_or_commit) == 40  # full sha, not abbreviated
+
+
+def test_repo_name_from_url_ending_in_dotdot_falls_back_to_safe_name() -> None:
+    """A repo URL whose basename is literally `..` (e.g. a URL ending in
+    `/..`) must fall back to a safe directory name instead of a clone
+    destination that would resolve one level up out of
+    materials/<study>/github/."""
+    assert materials._repo_name_from_url("https://github.com/some/org/..") == "repo"
+    assert materials._repo_name_from_url("file:///tmp/whatever/..") == "repo"
+
+
+def test_repo_name_from_url_strips_query_and_fragment() -> None:
+    assert (
+        materials._repo_name_from_url("https://github.com/org/repo.git?ref=abc#frag")
+        == "repo"
+    )
 
 
 def test_github_clone_failure_marks_failed_without_raising(
@@ -561,6 +708,53 @@ def test_non_pending_sources_are_left_untouched_on_rerun(
     assert updated.sources == [already_ok, already_failed, already_skipped]
     # No requests should have been made at all (routes dict stays unused).
     assert fake_requests == {}
+
+
+# ---------------------------------------------------------------------------
+# Filesystem errors (OSError family) never raise out of the CLI
+# ---------------------------------------------------------------------------
+
+
+def test_filesystem_collision_marks_source_failed_and_continues_others(
+    fake_requests: dict, materials_root: Path
+) -> None:
+    """A pre-existing plain file where a directory needs to be created (e.g.
+    a file literally named `other` colliding with the `other/` destination
+    folder) raises `NotADirectoryError`/`FileExistsError` from mkdir -- this
+    must be caught per-source as `failed`, not propagate out of
+    `download_manifest`, and other pending sources must still run."""
+    collide_dir = materials_root / STUDY
+    collide_dir.mkdir(parents=True)
+    (collide_dir / "other").write_text("i am a file, not a directory")
+
+    colliding_url = "https://example.com/colliding.zip"
+    fake_requests[colliding_url] = _content_response(b"whatever")
+    colliding_source = schemas.MaterialsSource(
+        kind="other_url",
+        url=colliding_url,
+        relation="uncertain",
+        evidence="",
+        local_path=None,
+        download_status="pending",
+        sha256_or_commit=None,
+    )
+
+    _wire_osf_happy_path(fake_requests)
+    osf_ok_source = _osf_source()
+
+    manifest = schemas.MaterialsManifest(
+        study=STUDY,
+        status="found",
+        searches=[],
+        sources=[colliding_source, osf_ok_source],
+        notes=[],
+    )
+
+    updated = materials.download_manifest(manifest)
+
+    collide_result, osf_result = updated.sources
+    assert collide_result.download_status == "failed"
+    assert osf_result.download_status == "ok"
 
 
 # ---------------------------------------------------------------------------

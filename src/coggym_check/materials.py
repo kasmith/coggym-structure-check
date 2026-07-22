@@ -81,6 +81,34 @@ _CHUNK_SIZE = 65536
 # ---------------------------------------------------------------------------
 
 
+class _PathEscapeError(Exception):
+    """Raised when a remote-controlled name would resolve outside its
+    intended destination directory. Caught alongside `OSError` and
+    `requests.RequestException` at each per-source call site -- see the
+    "hostile metadata" note in the module docstring."""
+
+
+def _is_safe_path_segment(name: str) -> bool:
+    """Return whether `name` is safe to use as a single path segment.
+
+    Sanitization policy (defense in depth, layer 1 -- see module docstring):
+    every path segment sourced from third-party-controlled metadata (an OSF
+    `attributes.name`, a URL basename) is rejected if it is empty, `.`, `..`,
+    or contains a path separator (`/` or `\\`). Rejecting any segment
+    containing `/` also covers the case where the segment is itself an
+    absolute path (`pathlib` resets to an absolute RHS when joined with
+    `/`, which is exactly the traversal this guards against) and the case
+    where a single hostile `name` embeds multiple `../` components.
+
+    Callers that consume this: reject/skip the individual entry (OSF file
+    or folder) and record a note, or fall back to a fixed safe name (repo
+    URL / other_url basenames) -- documented per call site. This is layer 1;
+    layer 2 is the `resolve()` + `is_relative_to()` containment check in
+    `_download_within_cap`.
+    """
+    return bool(name) and name not in (".", "..") and "/" not in name and "\\" not in name
+
+
 def _manifest_sha256(entries: list[tuple[str, str]]) -> str:
     """sha256 of the sorted `<relpath>:<file-sha256>` lines -- see module
     docstring's `sha256_or_commit` convention."""
@@ -89,7 +117,7 @@ def _manifest_sha256(entries: list[tuple[str, str]]) -> str:
 
 
 def _download_within_cap(
-    url: str, dest_path: Path, running_total: int
+    url: str, dest_path: Path, running_total: int, base_dir: Path
 ) -> tuple[int, str] | None:
     """Stream `url` to `dest_path`, returning `(bytes_written, sha256_hex)`.
 
@@ -98,7 +126,22 @@ def _download_within_cap(
     against the response's `Content-Length` header up front when present,
     and incrementally against actual bytes streamed either way (covering
     servers that omit or understate `Content-Length`).
+
+    Defense in depth, layer 2: before any mkdir/open, `dest_path` is
+    resolved and checked to fall within `base_dir` (also resolved). Callers
+    are expected to have already sanitized the path segments that produced
+    `dest_path` (layer 1, `_is_safe_path_segment`); this check exists in
+    case that is ever missed or bypassed, raising `_PathEscapeError` instead
+    of writing outside `base_dir`. Callers must catch `_PathEscapeError`
+    (typically alongside `OSError`) and mark the source `failed`.
     """
+    resolved_dest = dest_path.resolve()
+    resolved_base = base_dir.resolve()
+    if not resolved_dest.is_relative_to(resolved_base):
+        raise _PathEscapeError(
+            f"refusing to write to {resolved_dest}: escapes {resolved_base}"
+        )
+
     resp = requests.get(url, stream=True, timeout=_TIMEOUT_S)
     resp.raise_for_status()
 
@@ -135,23 +178,37 @@ def _download_within_cap(
 
 
 def _extract_osf_node_id(url: str) -> str | None:
+    """Extract the 5-char OSF node id from `url` (with or without a scheme
+    or trailing slash), or `None` if `url` doesn't look like an OSF URL."""
     match = _OSF_NODE_RE.search(url)
     return match.group(1) if match else None
 
 
 def _osf_list_page(url: str) -> dict:
+    """GET one page of an OSF files-listing API response and return its
+    parsed JSON. Raises `requests.RequestException` on transport/HTTP
+    errors -- callers are responsible for catching it."""
     resp = requests.get(url, timeout=_TIMEOUT_S)
     resp.raise_for_status()
     return resp.json()
 
 
-def _osf_walk_files(start_url: str) -> list[tuple[str, dict]]:
+def _osf_walk_files(start_url: str) -> tuple[list[tuple[str, dict]], list[str]]:
     """Recursively list an OSF storage tree, returning `(relpath, file_entry)`
-    pairs. Folders are recursed into via each entry's own files listing href
-    (`relationships.files.links.related.href`); each listing (folder or
-    root) is paginated via `links.next`.
+    pairs plus any skip notes. Folders are recursed into via each entry's
+    own files listing href (`relationships.files.links.related.href`); each
+    listing (folder or root) is paginated via `links.next`.
+
+    Every remote-controlled `attributes.name` is treated as hostile (see
+    module docstring): an entry (file or folder) whose name fails
+    `_is_safe_path_segment` is skipped entirely -- not added to `results`,
+    and not recursed into if it's a folder -- with a note appended to the
+    second return value. This is layer 1 of the path-traversal defense
+    (layer 2 is the `resolve()` containment check in
+    `_download_within_cap`).
     """
     results: list[tuple[str, dict]] = []
+    skip_notes: list[str] = []
 
     def _walk(url: str, prefix: str) -> None:
         next_url: str | None = url
@@ -160,6 +217,12 @@ def _osf_walk_files(start_url: str) -> list[tuple[str, dict]]:
             for entry in data["data"]:
                 attrs = entry.get("attributes", {})
                 name = attrs.get("name", "unnamed")
+                if not _is_safe_path_segment(name):
+                    skip_notes.append(
+                        f"osf entry with unsafe name {name!r} under prefix "
+                        f"{prefix!r} skipped (path traversal guard)"
+                    )
+                    continue
                 relpath = f"{prefix}{name}"
                 if attrs.get("kind") == "folder":
                     folder_url = entry["relationships"]["files"]["links"]["related"]["href"]
@@ -169,7 +232,7 @@ def _osf_walk_files(start_url: str) -> list[tuple[str, dict]]:
             next_url = (data.get("links") or {}).get("next")
 
     _walk(start_url, "")
-    return results
+    return results, skip_notes
 
 
 def _download_osf_source(
@@ -183,10 +246,11 @@ def _download_osf_source(
 
     listing_url = f"{_OSF_API_BASE}/nodes/{node_id}/files/osfstorage/"
     try:
-        files = _osf_walk_files(listing_url)
+        files, skip_notes = _osf_walk_files(listing_url)
     except (requests.RequestException, KeyError, ValueError) as exc:
         notes.append(f"osf source {source.url}: failed to list files ({exc})")
         return source.model_copy(update={"download_status": "failed"}), notes
+    notes.extend(f"osf source {source.url}: {note}" for note in skip_notes)
 
     dest_dir = config.materials_dir() / study / "osf" / node_id
     downloaded: list[tuple[str, str]] = []
@@ -199,8 +263,8 @@ def _download_osf_source(
             notes.append(f"osf source {source.url}: {relpath} has no download link, skipping")
             continue
         try:
-            result = _download_within_cap(download_url, dest_dir / relpath, total_bytes)
-        except requests.RequestException as exc:
+            result = _download_within_cap(download_url, dest_dir / relpath, total_bytes, dest_dir)
+        except (requests.RequestException, OSError, _PathEscapeError) as exc:
             notes.append(f"osf source {source.url}: failed to download {relpath} ({exc})")
             return source.model_copy(update={"download_status": "failed"}), notes
         if result is None:
@@ -237,13 +301,28 @@ def _download_osf_source(
 
 
 def _repo_name_from_url(url: str) -> str:
-    name = url.rstrip("/").rsplit("/", 1)[-1]
+    """Derive a directory name for a cloned repo from its (remote-controlled)
+    URL: strips any query/fragment first (so `repo.git?ref=x#y` yields
+    `repo`, not `repo.git?ref=x#y`), then takes the path's last segment and
+    strips a trailing `.git`.
+
+    Sanitization policy (see `_is_safe_path_segment`): if the resulting name
+    is unsafe as a single path segment -- empty, `.`, `..`, or containing a
+    path separator (e.g. a URL ending in `/..`, whose basename is literally
+    `..`) -- falls back to the fixed name `"repo"` rather than raising or
+    propagating the hostile value into a directory name.
+    """
+    path = urlparse(url).path
+    name = path.rstrip("/").rsplit("/", 1)[-1]
     if name.endswith(".git"):
         name = name[: -len(".git")]
-    return name or "repo"
+    return name if _is_safe_path_segment(name) else "repo"
 
 
 def _git_head(dest_dir: Path) -> str:
+    """Return `git -C dest_dir rev-parse HEAD` (full 40-char sha), raising
+    `subprocess.CalledProcessError`/`OSError`/`subprocess.TimeoutExpired` on
+    failure -- callers are responsible for catching these."""
     result = subprocess.run(
         ["git", "-C", str(dest_dir), "rev-parse", "HEAD"],
         capture_output=True,
@@ -283,7 +362,12 @@ def _download_github_source(
             notes,
         )
 
-    dest_dir.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        dest_dir.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        notes.append(f"github source {source.url}: could not create {dest_dir.parent} ({exc})")
+        return source.model_copy(update={"download_status": "failed"}), notes
+
     try:
         subprocess.run(
             ["git", "clone", "--depth", "1", source.url, str(dest_dir)],
@@ -319,12 +403,17 @@ def _download_other_url_source(
     source: schemas.MaterialsSource, study: str
 ) -> tuple[schemas.MaterialsSource, list[str]]:
     notes: list[str] = []
-    filename = Path(urlparse(source.url).path).name or "download.bin"
+    raw_name = Path(urlparse(source.url).path).name
+    # Sanitization policy: fall back to a fixed safe name (rather than
+    # raising or propagating the hostile basename) if the URL's basename is
+    # empty or unsafe as a single path segment -- e.g. a URL ending in
+    # `/..`, whose basename is literally `..`. See `_is_safe_path_segment`.
+    filename = raw_name if _is_safe_path_segment(raw_name) else "download.bin"
     dest_dir = config.materials_dir() / study / "other"
 
     try:
-        result = _download_within_cap(source.url, dest_dir / filename, running_total=0)
-    except requests.RequestException as exc:
+        result = _download_within_cap(source.url, dest_dir / filename, 0, dest_dir)
+    except (requests.RequestException, OSError, _PathEscapeError) as exc:
         notes.append(f"other_url source {source.url}: failed to download ({exc})")
         return source.model_copy(update={"download_status": "failed"}), notes
 
