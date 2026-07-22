@@ -383,6 +383,60 @@ def test_run_study_continues_past_agentic_stage_failure(
     assert statuses["render"] == "failed"
 
 
+def test_run_study_redispatches_fix_unit_when_render_incomplete(
+    runs_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reproduces the fix/render resume gap: fix-drafter wrote a valid
+    fix_plan.json but crashed before render (render left `missing`). A plain
+    re-run (no --force) must still re-dispatch the fix+render unit — gating
+    re-dispatch on `statuses["fix"]` alone (which is already "done") would
+    skip it forever.
+    """
+    valid_dir = FIXTURES / "artifacts" / "valid"
+    study = "TestStudy2020Mini"
+    run_dir = rundir.run_dir_for(study, None)
+
+    # Every stage's own artifact except render's (report.md) is valid and
+    # present on disk — copied straight from the shared "valid artifacts"
+    # fixtures, which all already share this exact study name.
+    for stage, stage_def in rundir.STAGE_REGISTRY.items():
+        if stage == "render":
+            continue
+        (run_dir / stage_def.artifact).write_text((valid_dir / stage_def.artifact).read_text())
+
+    # Record every stage but render as already "done" (report.md is left
+    # off disk entirely -> stage_status reports it "missing").
+    for stage in rundir.STAGE_REGISTRY:
+        if stage == "render":
+            continue
+        rundir.record_stage(run_dir, stage, "done")
+
+    assert rundir.stage_status(run_dir)["fix"] == "done"
+    assert rundir.stage_status(run_dir)["render"] == "missing"
+
+    calls: list[list[str]] = []
+
+    def fake_run(cmd: list[str], capture_output: bool, text: bool) -> subprocess.CompletedProcess:
+        calls.append(cmd)
+        # Simulate fix-drafter re-running, finding fix_plan.json already
+        # done, and proceeding straight to render.
+        (run_dir / "report.md").write_text("# Report\n")
+        canned_stdout = json.dumps(
+            {"total_cost_usd": 0.02, "duration_ms": 300, "session_id": "sess-resume"}
+        )
+        return subprocess.CompletedProcess(cmd, 0, stdout=canned_stdout, stderr="")
+
+    monkeypatch.setattr(headless.subprocess, "run", fake_run)
+
+    result_dir = headless.run_study(study)
+
+    # The fix+render dispatch unit must have been re-invoked exactly once.
+    assert len(calls) == 1
+    statuses = rundir.stage_status(result_dir)
+    assert statuses["fix"] == "done"
+    assert statuses["render"] == "done"
+
+
 def test_run_snapshot_stage_raises_fatal_on_missing_study(
     runs_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -421,6 +475,75 @@ def test_run_studies_sequential_fatal_error_does_not_stop_next(
     assert results[1].study == "GoodStudy"
     assert results[1].run_dir == Path("/fake/runs/GoodStudy")
     assert results[1].error is None
+
+
+def test_run_contains_claude_spawn_failure_across_two_studies(
+    runs_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A missing/unspawnable `claude` binary (FileNotFoundError from
+    subprocess.run) must be contained per-stage, not crash the whole batch:
+    every agentic stage it hits is recorded `failed` (with zeroed Claude
+    metadata) and `run()` still proceeds to the next study.
+    """
+    snapshot = schemas.StudySnapshot(
+        study="S",
+        commit=None,
+        generated_at="2026-01-01T00:00:00Z",
+        tool_version="0.1.0",
+        paper_pdf_present=False,
+        source_url_csv=None,
+        citation=schemas.Citation(),
+        experiments={},
+    )
+    lint_report = schemas.LintReport(study="S", checks_run=[], findings=[])
+    paper_status = schemas.PaperStatus(
+        study="S",
+        status="found_local",
+        pdf_path="p",
+        sha256="h",
+        retrieved_from=None,
+        candidates_tried=[],
+        n_pages=1,
+        text_quality=1.0,
+        needs_direct_pdf_read=False,
+        notes=[],
+    )
+
+    monkeypatch.setattr(headless.dataset, "load_study", lambda study, commit=None: snapshot)
+    monkeypatch.setattr(headless.lint, "lint_study", lambda study, commit=None: lint_report)
+    monkeypatch.setattr(headless.paper, "extract_paper", lambda study: paper_status)
+
+    def fake_run(cmd: list[str], capture_output: bool, text: bool) -> subprocess.CompletedProcess:
+        raise FileNotFoundError("[Errno 2] No such file or directory: 'claude'")
+
+    monkeypatch.setattr(headless.subprocess, "run", fake_run)
+
+    # Must not raise: the whole point is that a spawn failure never escapes
+    # run() and both studies still get a result.
+    results = headless.run(["Study1", "Study2"])
+
+    assert [r.study for r in results] == ["Study1", "Study2"]
+    assert all(r.error is None for r in results)
+    assert all(r.run_dir is not None for r in results)
+
+    for result in results:
+        assert result.run_dir is not None
+        statuses = rundir.stage_status(result.run_dir)
+        # Every agentic stage the loop reached hit the mocked spawn failure.
+        assert statuses["comparison"] == "failed"
+        assert statuses["fix"] == "failed"
+        assert statuses["render"] == "failed"
+
+        data = json.loads((result.run_dir / "run_meta.json").read_text())
+        comparison_record = data["stages"]["comparison"]
+        assert comparison_record["status"] == "failed"
+        assert comparison_record["claude"] == {
+            "cost_usd": 0.0,
+            "duration_s": 0.0,
+            "session_id": "",
+        }
+        assert comparison_record["skipped_reason"]
+        assert "claude" in comparison_record["skipped_reason"].lower()
 
 
 # ---------------------------------------------------------------------------

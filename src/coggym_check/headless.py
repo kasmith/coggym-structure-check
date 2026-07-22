@@ -43,6 +43,13 @@ from coggym_check import config, dataset, lint, paper, rundir, schemas
 #: (task-11 brief). Overridable per `run` invocation via `--max-turns`.
 DEFAULT_MAX_TURNS = 60
 
+#: Recorded for a stage whose `claude -p` subprocess never spawned at all
+#: (`FileNotFoundError`/`OSError`/`subprocess.SubprocessError`) — there is no
+#: cost/duration/session to report since no invocation actually happened, so
+#: this mirrors `_parse_claude_output`'s own malformed-stdout fallback value
+#: rather than inventing a new "no data" convention.
+_ZEROED_CLAUDE_META = schemas.ClaudeInvocationMeta(cost_usd=0.0, duration_s=0.0, session_id="")
+
 
 class StudyFatalError(RuntimeError):
     """Raised when one study's pipeline cannot proceed at all.
@@ -300,7 +307,23 @@ def run_agentic_stage(
     prompt = build_stage_prompt(study, run_dir, _input_artifact_paths(run_dir, stage), output_path)
     cmd = build_claude_command(agent, prompt, max_turns)
 
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True)
+    except (OSError, subprocess.SubprocessError) as exc:
+        # The `claude` binary itself is missing/unspawnable (FileNotFoundError
+        # is the common case) — this is an environment problem, not a
+        # per-stage artifact-validation failure, but it must be contained the
+        # same way: recorded `failed` on this one stage so the rest of the
+        # batch (remaining stages, remaining studies) keeps going rather than
+        # an unhandled OSError/SubprocessError taking down the whole run.
+        rundir.record_stage(
+            run_dir,
+            stage,
+            "failed",
+            claude=_ZEROED_CLAUDE_META,
+            skipped_reason=f"claude subprocess failed to spawn: {exc}",
+        )
+        return
     claude_meta = _parse_claude_output(proc.stdout)
 
     status = "done" if _artifact_is_valid(output_path) else "failed"
@@ -326,7 +349,16 @@ def run_fix_and_render_stage(run_dir: Path, study: str, max_turns: int) -> None:
     )
     cmd = build_claude_command(agent, prompt, max_turns)
 
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True)
+    except (OSError, subprocess.SubprocessError) as exc:
+        # Same containment as run_agentic_stage's spawn-failure handling —
+        # this unit records *two* registry stages (fix, render) from one
+        # invocation, so both get the same failed/zeroed/explanatory record.
+        note = f"claude subprocess failed to spawn: {exc}"
+        rundir.record_stage(run_dir, "fix", "failed", claude=_ZEROED_CLAUDE_META, skipped_reason=note)
+        rundir.record_stage(run_dir, "render", "failed", claude=_ZEROED_CLAUDE_META, skipped_reason=note)
+        return
     claude_meta = _parse_claude_output(proc.stdout)
 
     fix_status = "done" if _artifact_is_valid(fix_output) else "failed"
@@ -504,7 +536,24 @@ def run_study(
     for stage in STAGE_DISPATCH_ORDER:
         statuses = rundir.stage_status(run_dir)
         status = statuses[stage]
-        if not force and status in ("done", "skipped"):
+        if stage == "fix":
+            # `fix` and `render` are one dispatch unit (run_fix_and_render_stage)
+            # even though `render` isn't its own entry in STAGE_DISPATCH_ORDER,
+            # so gating re-dispatch on `statuses["fix"]` alone misses the case
+            # where fix-drafter wrote a valid fix_plan.json but crashed before
+            # render (render left `failed`/`missing`) — a plain re-run would
+            # then see fix "done" and never re-attempt render. Gate on either
+            # stage being incomplete instead; re-dispatching re-runs the
+            # fix-drafter agent, which is expected to find fix_plan.json
+            # already done and proceed straight to render (its own output
+            # contract handles that idempotency, not this loop).
+            if (
+                not force
+                and statuses["fix"] in ("done", "skipped")
+                and statuses["render"] in ("done", "skipped")
+            ):
+                continue
+        elif not force and status in ("done", "skipped"):
             continue
         _dispatch_stage(run_dir, study, commit, stage, max_turns)
     return run_dir
