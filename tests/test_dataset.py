@@ -172,14 +172,26 @@ def test_source_url_csv_matched_by_study_folder() -> None:
     assert snapshot.source_url_csv == "https://example.org/paper"
 
 
-def test_source_url_csv_none_when_study_absent_from_csv(monkeypatch: pytest.MonkeyPatch) -> None:
-    # NoSuchStudy2099 isn't a real study dir, so exercise the CSV-lookup
-    # helper's "not found" branch directly against a study that IS on disk
-    # but not listed for a different name would require another fixture;
-    # instead assert the real fixture's own experiments column doesn't
-    # match an unrelated study.
+def test_source_url_csv_none_when_study_absent_from_csv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A study that genuinely never appears in any row's `experiments`
+    column must yield `source_url_csv is None` (the unmatched branch of
+    `_lookup_source_url`), even though the CSV file itself is present and
+    non-empty.
+    """
+    repo_root = tmp_path / "no_csv_match_repo"
+    repo_root.mkdir()
+    _copy_tree(FIXTURES / "studies", repo_root / "studies")
+    (repo_root / "papers_represented.csv").write_text(
+        "paper_title,authors,Potential reviewer,experiment_count,experiments,source_url\n"
+        "Some Other Study,Other Author,,1,OtherStudy2019Foo/exp1,https://example.org/other\n"
+    )
+    monkeypatch.setattr(config, "datasets_repo", lambda: repo_root)
+
     snapshot = dataset.load_study("TestStudy2020Mini")
-    assert "OtherStudy2019Foo" not in (snapshot.source_url_csv or "")
+
+    assert snapshot.source_url_csv is None
 
 
 def test_citation_populated_from_first_experiment_config() -> None:
@@ -265,6 +277,84 @@ class TestExperimentSnapshotExp2:
         assert query.slider is not None
         assert query.slider.min == 0
         assert query.slider.max == 100
+
+
+def test_block_kinds_mixed_and_unresolvable_ids_do_not_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A block whose ids don't cleanly resolve to either instruction.jsonl or
+    trial.jsonl must classify as "mixed" rather than crashing the snapshot —
+    both for a block that straddles an instruction id and a trial id, and
+    for a block containing an id that resolves nowhere at all (unresolvable
+    ids are lint's job to flag, not dataset.py's job to raise on).
+    """
+    repo_root = tmp_path / "mixed_blocks_repo"
+    repo_root.mkdir()
+    _copy_tree(FIXTURES / "studies", repo_root / "studies")
+    config_path = repo_root / "studies/TestStudy2020Mini/exp1/config.json"
+    config_data = json.loads(config_path.read_text())
+    config_data["experimentFlow"].append(
+        {
+            "experimental_condition": "cond_mixed",
+            "blocks": [
+                ["instruction_intro", "scenario_001"],
+                ["totally_unresolvable_id"],
+            ],
+        }
+    )
+    config_path.write_text(json.dumps(config_data))
+    monkeypatch.setattr(config, "datasets_repo", lambda: repo_root)
+
+    snapshot = dataset.load_study("TestStudy2020Mini")
+
+    cond = snapshot.experiments["exp1"].conditions[1]
+    assert cond.name == "cond_mixed"
+    assert cond.n_blocks == 2
+    assert cond.block_sizes == [2, 1]
+    assert cond.block_kinds == ["mixed", "mixed"]
+
+
+def test_human_data_missing_file_yields_none_participants_count(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An experiment whose `human_data_mean.json` is entirely absent must
+    still produce a snapshot, with `human_data.participants_count` (and
+    `judgment_count`) coming back `None` rather than raising.
+    """
+    repo_root = tmp_path / "missing_human_data_repo"
+    repo_root.mkdir()
+    _copy_tree(FIXTURES / "studies", repo_root / "studies")
+    (repo_root / "studies/TestStudy2020Mini/exp1/human_data_mean.json").unlink()
+    monkeypatch.setattr(config, "datasets_repo", lambda: repo_root)
+
+    snapshot = dataset.load_study("TestStudy2020Mini")
+
+    exp1 = snapshot.experiments["exp1"]
+    assert exp1.human_data.participants_count is None
+    assert exp1.human_data.judgment_count is None
+
+
+def test_human_data_malformed_participant_count_yields_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A `participants_info.count` that isn't a plain int (e.g. spelled out
+    as a string) must yield `participants_count is None` rather than raising
+    or silently coercing.
+    """
+    repo_root = tmp_path / "malformed_human_data_repo"
+    repo_root.mkdir()
+    _copy_tree(FIXTURES / "studies", repo_root / "studies")
+    human_data_path = (
+        repo_root / "studies/TestStudy2020Mini/exp1/human_data_mean.json"
+    )
+    human_data = json.loads(human_data_path.read_text())
+    human_data["participants_info"]["count"] = "sixteen"
+    human_data_path.write_text(json.dumps(human_data))
+    monkeypatch.setattr(config, "datasets_repo", lambda: repo_root)
+
+    snapshot = dataset.load_study("TestStudy2020Mini")
+
+    assert snapshot.experiments["exp1"].human_data.participants_count is None
 
 
 # ---------------------------------------------------------------------------
