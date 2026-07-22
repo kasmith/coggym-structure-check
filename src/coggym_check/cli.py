@@ -114,6 +114,7 @@ def _cmd_snapshot(args: argparse.Namespace) -> int:
 
     run_dir = rundir.run_dir_for(snapshot.study, args.commit)
     (run_dir / "study_snapshot.json").write_text(payload)
+    rundir.record_stage(run_dir, "snapshot", "done")
     print(str(run_dir))
     return 0
 
@@ -164,6 +165,9 @@ def _cmd_lint(args: argparse.Namespace) -> int:
 
     run_dir = rundir.run_dir_for(report.study, args.commit)
     (run_dir / "lint.json").write_text(payload)
+    # Recorded unconditionally, mirroring headless.run_lint_stage: error-level
+    # findings are non-fatal data, not a reason to leave this stage unrecorded.
+    rundir.record_stage(run_dir, "lint", "done")
 
     _print_findings_table(report)
     print(str(run_dir))
@@ -193,6 +197,12 @@ def _cmd_extract_paper(args: argparse.Namespace) -> int:
 
     run_dir = rundir.run_dir_for(status.study, args.commit)
     (run_dir / "paper_status.json").write_text(payload)
+    if status.status != "not_found":
+        rundir.record_stage(run_dir, "paper", "done")
+    # else: leave unrecorded (mirroring headless.run_paper_stage) -- a
+    # not_found status is exactly the signal that the paper-finder agent
+    # (interactively) or run_agentic_stage (headless) still needs to run
+    # and record this stage itself; recording "done" here would hide that.
 
     print(f"status: {status.status}")
     if status.text_quality is not None:
@@ -235,6 +245,12 @@ def _cmd_download(args: argparse.Namespace) -> int:
     payload = updated.model_dump_json(indent=2)
     schemas.MaterialsManifest.model_validate_json(payload)
     manifest_path.write_text(payload)
+    # Recorded once the manifest is back-filled and re-validated, regardless
+    # of per-source download outcomes (mirrors headless's artifact-validity-
+    # only check in run_agentic_stage/_artifact_is_valid) -- a source that
+    # ended up "failed"/"skipped_too_large" is still a fully-formed, valid
+    # materials_manifest.json, not a reason to leave this stage unrecorded.
+    rundir.record_stage(run_dir, "materials", "done")
 
     ok_count = sum(
         1
@@ -299,6 +315,7 @@ def _cmd_render(args: argparse.Namespace) -> int:
     )
     (run_dir / "report.md").write_text(report_md)
     (run_dir / "pr.md").write_text(pr_md)
+    rundir.record_stage(run_dir, "render", "done")
 
     print(str(run_dir))
     return 0
@@ -356,6 +373,38 @@ def _cmd_run(args: argparse.Namespace) -> int:
         else:
             print(str(result.run_dir))
     return exit_code
+
+
+#: Statuses `record_stage` itself accepts (see rundir.record_stage's
+#: signature) -- "missing"/"stale" are `stage_status`'s own *computed*
+#: statuses, never something a caller records directly.
+_RECORDABLE_STATUSES: tuple[str, ...] = ("done", "skipped", "failed")
+
+
+def _cmd_record_stage(args: argparse.Namespace) -> int:
+    """Thin wrapper over `rundir.record_stage`, giving the interactive
+    `/check-study` skill (which has no other way to call Python directly) a
+    CLI entry point to record an agentic stage's completion or skip --
+    exactly the bookkeeping `headless.py` already does in-process for a
+    `run` batch.
+
+    Exit codes: 2 for an unknown `stage`/`status` (a usage error -- caught
+    here rather than left to `record_stage`'s own `ValueError` so the
+    message can name every valid choice at once), else 0.
+    """
+    if args.stage not in rundir.STAGE_REGISTRY:
+        known = ", ".join(rundir.STAGE_REGISTRY)
+        print(f"unknown stage '{args.stage}'; known stages: {known}", file=sys.stderr)
+        return 2
+    if args.status not in _RECORDABLE_STATUSES:
+        known = ", ".join(_RECORDABLE_STATUSES)
+        print(f"unknown status '{args.status}'; known statuses: {known}", file=sys.stderr)
+        return 2
+
+    run_dir = rundir.run_dir_for(args.study, args.commit)
+    rundir.record_stage(run_dir, args.stage, args.status, skipped_reason=args.reason)
+    print(str(run_dir))
+    return 0
 
 
 def _print_stage_status_table(statuses: dict[str, str]) -> None:
@@ -537,6 +586,31 @@ def build_parser() -> argparse.ArgumentParser:
         help="--max-turns passed to every agentic stage's `claude -p` invocation (default: 60).",
     )
     run_parser.set_defaults(func=_cmd_run)
+
+    record_stage_parser = subparsers.add_parser(
+        "record-stage",
+        help=(
+            "Record one stage's done/skipped/failed outcome into run_meta.json "
+            "-- for interactive orchestration to record an agentic stage's "
+            "completion or a skip rule firing (see .claude/skills/check-study/SKILL.md)."
+        ),
+    )
+    record_stage_parser.add_argument("study", help="Study folder name under studies/.")
+    record_stage_parser.add_argument(
+        "stage", help="Registry stage name, e.g. paper_summary, comparison, fix."
+    )
+    record_stage_parser.add_argument("status", help="One of: done, skipped, failed.")
+    record_stage_parser.add_argument(
+        "--commit",
+        default=None,
+        help="Pin to a datasets-repo commit (run dir becomes runs/<study>@<shortsha>).",
+    )
+    record_stage_parser.add_argument(
+        "--reason",
+        default=None,
+        help="Why the stage was skipped/failed (stored as skipped_reason).",
+    )
+    record_stage_parser.set_defaults(func=_cmd_record_stage)
 
     init_run_parser = subparsers.add_parser(
         "init-run",

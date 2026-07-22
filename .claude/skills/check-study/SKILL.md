@@ -60,12 +60,13 @@ downstream stage from `missing` to `stale` because its input hash changed).
 - Otherwise: walk the registry in order. For each stage, run it if its
   current status is `missing` or `stale`, or if `--force` was passed (even
   when `done`). Leave a stage alone if it is `done` (and not forced). A
-  stage previously `skipped` (per the skip rules in step 3e/3f) stays skipped
-  on a plain re-run — only `--force` or `--stage` re-attempts it. Note that
-  skipped stages appear as `missing` in the table; the skip decision is
-  re-derived from `paper_status.json` / `materials_manifest.json` each time
-  the stage is reached, so a `missing` `paper_summary`/`materials_summary` is
-  not necessarily pending work.
+  stage previously `skipped` (per the skip rules in step 3e/3f, recorded via
+  `record-stage ... skipped` — see step 3) stays skipped on a plain re-run —
+  only `--force` or `--stage` re-attempts it, and the status table genuinely
+  shows it as `skipped`, not `missing`. Staleness is real here too: once a
+  stage has been recorded (via `record-stage` below, or automatically by the
+  deterministic CLI subcommands), a later change to one of its recorded
+  upstream inputs flips it to `stale` on the next `init-run`.
 
 ## 3. Run each stage
 
@@ -111,7 +112,10 @@ After the agent returns, run `python -m coggym_check validate-artifact
 $RUN_DIR/paper_status.json` yourself to confirm it's still valid, then
 re-read its `status` field (needed for the skip rule in step 4) — the agent
 may leave it `paywalled` or `not_found`; both are legitimate terminal
-outcomes here, not failures of this stage.
+outcomes here, not failures of this stage. Once validated, record it:
+```
+python -m coggym_check record-stage <StudyName> paper done [--commit <sha>]
+```
 
 ### d. `materials` — agentic (`materials-scout`)
 
@@ -128,16 +132,20 @@ Launch via Task tool:
 
 After it returns: `python -m coggym_check validate-artifact
 $RUN_DIR/materials_manifest.json`. Read its `status` field (needed for the
-skip rule below).
+skip rule below). Once validated, record it:
+```
+python -m coggym_check record-stage <StudyName> materials done [--commit <sha>]
+```
 
 ### e. `paper_summary` — agentic (`paper-analyst`), skippable
 
 **Skip this stage** if `paper_status.json`'s `status` is `not_found` or
 `paywalled` — there is no paper text for `paper-analyst` to read. Leave
-`paper_summary.json` unwritten and note the skip for the final summary (no
-CLI call records this; `record-stage` is Python-internal only and has no CLI
-entry point — the absence of the artifact plus your note in the final
-message is the record).
+`paper_summary.json` unwritten, note the skip for the final summary, and
+record it:
+```
+python -m coggym_check record-stage <StudyName> paper_summary skipped --reason "paper_status is <status>" [--commit <sha>]
+```
 
 Otherwise, launch via Task tool:
 
@@ -150,14 +158,20 @@ Otherwise, launch via Task tool:
 > it.
 
 After it returns: `python -m coggym_check validate-artifact
-$RUN_DIR/paper_summary.json`.
+$RUN_DIR/paper_summary.json`, then record it:
+```
+python -m coggym_check record-stage <StudyName> paper_summary done [--commit <sha>]
+```
 
 ### f. `materials_summary` — agentic (`materials-analyst`), skippable
 
 **Skip this stage** if `materials_manifest.json`'s `status` is
 `none_found` — there is nothing downloaded for `materials-analyst` to mine.
-Leave `materials_summary.json` unwritten and note the skip for the final
-summary, same as above.
+Leave `materials_summary.json` unwritten, note the skip for the final
+summary, and record it:
+```
+python -m coggym_check record-stage <StudyName> materials_summary skipped --reason "materials_manifest status is none_found" [--commit <sha>]
+```
 
 Otherwise, launch via Task tool:
 
@@ -170,7 +184,10 @@ Otherwise, launch via Task tool:
 > on it.
 
 After it returns: `python -m coggym_check validate-artifact
-$RUN_DIR/materials_summary.json`.
+$RUN_DIR/materials_summary.json`, then record it:
+```
+python -m coggym_check record-stage <StudyName> materials_summary done [--commit <sha>]
+```
 
 ### g. `comparison` — agentic (`structure-comparator`), always runs
 
@@ -191,6 +208,10 @@ honestly). Launch via Task tool:
 After it returns: `python -m coggym_check validate-artifact
 $RUN_DIR/comparison.json`. Read `clear_cut_count` /
 `needs_human_judgment_count` off it — you need these for the final message.
+Then record it:
+```
+python -m coggym_check record-stage <StudyName> comparison done [--commit <sha>]
+```
 
 ### h. `fix` + `render` — one agentic step (`fix-drafter`)
 
@@ -210,6 +231,11 @@ After it returns, verify **both** artifacts it is responsible for:
 `python -m coggym_check validate-artifact $RUN_DIR/fix_plan.json`, and
 confirm `$RUN_DIR/report.md` exists (`report.md` has no pydantic schema —
 its presence alone is the check). Also confirm `$RUN_DIR/pr.md` exists.
+Once both are confirmed, record both stages:
+```
+python -m coggym_check record-stage <StudyName> fix done [--commit <sha>]
+python -m coggym_check record-stage <StudyName> render done [--commit <sha>]
+```
 
 If `apply-fixes` refused because there is no lint baseline (`lint.json`
 missing) — this should never happen since stage `b` always runs lint first

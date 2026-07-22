@@ -620,3 +620,23 @@ def test_cli_lint_missing_study_exits_nonzero(
     exit_code = cli.main(["lint", "NoSuchStudy2099"])
 
     assert exit_code != 0
+
+
+def test_cli_lint_records_stage_done_even_with_error_level_finding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Finding 2 (whole-branch review): `lint` must record its stage `done`
+    unconditionally once lint.json is written, mirroring
+    headless.run_lint_stage -- error-level findings are non-fatal data, not
+    a reason to leave the stage unrecorded (which would otherwise sink
+    'comparison' back into artifact-first semantics forever)."""
+    monkeypatch.setattr(config, "datasets_repo", lambda: BROKEN_ROOT)
+    monkeypatch.setattr(config, "runs_dir", lambda: tmp_path / "runs")
+
+    exit_code = cli.main(["lint", "DanglingBlockId2020Bad"])
+
+    assert exit_code == 1
+    run_meta = json.loads(
+        (tmp_path / "runs/DanglingBlockId2020Bad/run_meta.json").read_text()
+    )
+    assert run_meta["stages"]["lint"]["status"] == "done"

@@ -15,12 +15,13 @@ left blank (0 extractable characters). That gives a deterministic
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 
 import pymupdf
 import pytest
 
-from coggym_check import cli, config, paper, schemas
+from coggym_check import cli, config, paper, rundir, schemas
 
 STUDY = "TestStudy2020Mini"
 
@@ -261,3 +262,74 @@ def test_extract_paper_corrupt_pdf_writes_not_found_status(
     # So the dest should not exist
     dest_pdf = materials_dir / STUDY / "paper.pdf"
     assert not dest_pdf.exists()
+
+
+# ---------------------------------------------------------------------------
+# stage recording (Finding 2, whole-branch review): `extract-paper` must
+# record its own "paper" stage on found_local, and must NOT record it on
+# not_found -- the unrecorded case is exactly the signal the paper-finder
+# agent (interactively) or run_agentic_stage (headless) still needs to run
+# and record this stage itself.
+# ---------------------------------------------------------------------------
+
+
+def test_cli_extract_paper_records_stage_done_for_found_local(
+    repo_paths: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    datasets_repo, _materials_dir = repo_paths
+    _write_fixture_pdf(datasets_repo / "studies" / STUDY / "paper.pdf")
+    monkeypatch.setattr(config, "runs_dir", lambda: tmp_path / "runs")
+
+    exit_code = cli.main(["extract-paper", STUDY])
+
+    assert exit_code == 0
+    run_dir = tmp_path / "runs" / STUDY
+    run_meta = json.loads((run_dir / "run_meta.json").read_text())
+    assert run_meta["stages"]["paper"]["status"] == "done"
+
+
+def test_cli_extract_paper_not_found_leaves_stage_unrecorded(
+    repo_paths: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(config, "runs_dir", lambda: tmp_path / "runs")
+
+    exit_code = cli.main(["extract-paper", STUDY])
+
+    assert exit_code == 1
+    run_dir = tmp_path / "runs" / STUDY
+    run_meta_path = run_dir / "run_meta.json"
+    if run_meta_path.exists():
+        run_meta = json.loads(run_meta_path.read_text())
+        assert "paper" not in run_meta["stages"]
+
+
+def test_cli_paper_stage_flips_stale_after_recording_when_snapshot_changes(
+    repo_paths: tuple[Path, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """End-to-end demonstration that interactive staleness is no longer dead
+    (Finding 2): a real CLI subcommand (`extract-paper`) records the `paper`
+    stage, so a later change to its recorded input (`study_snapshot.json`)
+    flips `paper` from `done` to `stale` -- both via `rundir.stage_status`
+    directly and via `init-run`'s printed table."""
+    datasets_repo, _materials_dir = repo_paths
+    _write_fixture_pdf(datasets_repo / "studies" / STUDY / "paper.pdf")
+    monkeypatch.setattr(config, "runs_dir", lambda: tmp_path / "runs")
+    run_dir = tmp_path / "runs" / STUDY
+    run_dir.mkdir(parents=True)
+    (run_dir / "study_snapshot.json").write_text('{"v": 1}')
+
+    exit_code = cli.main(["extract-paper", STUDY])
+    assert exit_code == 0
+    assert rundir.stage_status(run_dir)["paper"] == "done"
+
+    (run_dir / "study_snapshot.json").write_text('{"v": 2}')
+    assert rundir.stage_status(run_dir)["paper"] == "stale"
+
+    capsys.readouterr()
+    cli.main(["init-run", STUDY])
+    out = capsys.readouterr().out
+    lines = [line for line in out.splitlines() if line.strip().startswith("paper ")]
+    assert lines and "stale" in lines[0]

@@ -11,9 +11,12 @@ a reviewer should read the diff) rather than the test auto-updating them.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
-from coggym_check import report, schemas
+import pytest
+
+from coggym_check import cli, config, report, schemas
 
 FIXTURES = Path(__file__).parent / "fixtures" / "artifacts"
 GENERATED_AT = "2026-01-15T12:00:00Z"
@@ -74,3 +77,30 @@ def test_render_returns_tuple_of_two_strings() -> None:
     assert isinstance(result, tuple)
     assert len(result) == 2
     assert all(isinstance(part, str) for part in result)
+
+
+# ---------------------------------------------------------------------------
+# CLI: render subcommand
+# ---------------------------------------------------------------------------
+
+
+def test_cli_render_records_stage_done(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Finding 2 (whole-branch review): `render` must record its stage
+    'done' once report.md/pr.md are written, mirroring
+    headless.run_fix_and_render_stage's render half."""
+    study = "TestStudy2020Mini"
+    valid_dir = Path(__file__).parent / "fixtures" / "artifacts" / "valid"
+    monkeypatch.setattr(config, "runs_dir", lambda: tmp_path / "runs")
+    run_dir = tmp_path / "runs" / study
+    run_dir.mkdir(parents=True)
+    (run_dir / "comparison.json").write_text((valid_dir / "comparison.json").read_text())
+
+    exit_code = cli.main(["render", study])
+
+    assert exit_code == 0
+    assert (run_dir / "report.md").exists()
+    assert (run_dir / "pr.md").exists()
+    run_meta = json.loads((run_dir / "run_meta.json").read_text())
+    assert run_meta["stages"]["render"]["status"] == "done"

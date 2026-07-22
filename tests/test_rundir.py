@@ -319,3 +319,127 @@ def test_cli_init_run_with_commit_uses_shortsha_dir(
     assert exit_code == 0
     run_dir_path = tmp_path / "runs" / f"AnyStudy@{sha[:9]}"
     assert run_dir_path.is_dir()
+
+
+# ---------------------------------------------------------------------------
+# record-stage CLI subcommand (Finding 2, whole-branch review): gives
+# interactive orchestration (which has no other way to call Python
+# directly) a CLI entry point for the same record_stage bookkeeping
+# headless.py already does in-process.
+# ---------------------------------------------------------------------------
+
+
+def test_cli_record_stage_done_happy_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(config, "runs_dir", lambda: tmp_path / "runs")
+
+    exit_code = cli.main(["record-stage", STUDY, "comparison", "done"])
+
+    assert exit_code == 0
+    run_dir = tmp_path / "runs" / STUDY
+    out = capsys.readouterr().out.strip()
+    assert Path(out) == run_dir
+    data = json.loads((run_dir / "run_meta.json").read_text())
+    assert data["stages"]["comparison"]["status"] == "done"
+
+
+def test_cli_record_stage_skipped_with_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(config, "runs_dir", lambda: tmp_path / "runs")
+
+    exit_code = cli.main(
+        ["record-stage", STUDY, "paper_summary", "skipped", "--reason", "paper_status is not_found"]
+    )
+
+    assert exit_code == 0
+    run_dir = tmp_path / "runs" / STUDY
+    data = json.loads((run_dir / "run_meta.json").read_text())
+    assert data["stages"]["paper_summary"]["status"] == "skipped"
+    assert data["stages"]["paper_summary"]["skipped_reason"] == "paper_status is not_found"
+
+
+def test_cli_record_stage_with_commit_uses_shortsha_run_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(config, "runs_dir", lambda: tmp_path / "runs")
+    sha = "abcdef0123456789"
+
+    exit_code = cli.main(["record-stage", STUDY, "fix", "failed", "--commit", sha])
+
+    assert exit_code == 0
+    run_dir = tmp_path / "runs" / f"{STUDY}@{sha[:9]}"
+    data = json.loads((run_dir / "run_meta.json").read_text())
+    assert data["stages"]["fix"]["status"] == "failed"
+
+
+def test_cli_record_stage_invalid_stage_exits_2(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(config, "runs_dir", lambda: tmp_path / "runs")
+
+    exit_code = cli.main(["record-stage", STUDY, "not-a-real-stage", "done"])
+
+    assert exit_code == 2
+    err = capsys.readouterr().err
+    assert "not-a-real-stage" in err
+
+
+def test_cli_record_stage_invalid_status_exits_2(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(config, "runs_dir", lambda: tmp_path / "runs")
+
+    exit_code = cli.main(["record-stage", STUDY, "comparison", "not-a-real-status"])
+
+    assert exit_code == 2
+    err = capsys.readouterr().err
+    assert "not-a-real-status" in err
+
+
+def test_cli_record_stage_then_downstream_flips_stale_on_upstream_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The staleness flip the interactive skill's step 1/2 claims must now
+    actually happen: record 'lint' via the CLI, write comparison.json as
+    'done' too, then change lint.json -- comparison must flip to stale, and
+    init-run's printed table must show it."""
+    monkeypatch.setattr(config, "runs_dir", lambda: tmp_path / "runs")
+    run_dir = rundir.init_run(STUDY)
+    _write_lint(run_dir)
+
+    exit_code = cli.main(["record-stage", STUDY, "lint", "done"])
+    assert exit_code == 0
+
+    (run_dir / "study_snapshot.json").write_text('{"v": 1}')
+    # 'comparison''s other two inputs (paper_summary, materials_summary) are
+    # deliberately left absent -- _hash_artifact hashes a missing input as
+    # the "missing" sentinel, so record_stage works fine without them.
+    comparison = schemas.Comparison(
+        study=STUDY,
+        commit=None,
+        inputs={},
+        coverage=schemas.Coverage(paper="none", materials="none"),
+        experiments=[],
+        needs_human_judgment_count=0,
+        clear_cut_count=0,
+    )
+    (run_dir / "comparison.json").write_text(comparison.model_dump_json(indent=2))
+    cli.main(["record-stage", STUDY, "comparison", "done"])
+
+    assert rundir.stage_status(run_dir)["comparison"] == "done"
+
+    # Modify lint.json (an upstream input of 'comparison') after recording.
+    _write_lint(run_dir)
+    (run_dir / "lint.json").write_text(
+        (run_dir / "lint.json").read_text().replace("files-present", "files-present-v2")
+    )
+
+    assert rundir.stage_status(run_dir)["comparison"] == "stale"
+
+    capsys.readouterr()
+    cli.main(["init-run", STUDY])
+    out = capsys.readouterr().out
+    lines = [line for line in out.splitlines() if line.strip().startswith("comparison")]
+    assert lines and "stale" in lines[0]

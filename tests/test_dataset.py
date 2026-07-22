@@ -468,3 +468,21 @@ def test_cli_snapshot_missing_study_exits_nonzero(
     monkeypatch.setattr(config, "runs_dir", lambda: tmp_path / "runs")
     exit_code = cli.main(["snapshot", "NoSuchStudy2099"])
     assert exit_code != 0
+
+
+def test_cli_snapshot_records_stage_done(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Finding 2 (whole-branch review): deterministic CLI subcommands must
+    record their own stage into run_meta.json on success, mirroring
+    headless.run_snapshot_stage -- otherwise interactive orchestration's
+    staleness detection can never kick in (rundir.stage_status's
+    artifact-first rule only compares hashes once a record exists)."""
+    monkeypatch.setattr(config, "runs_dir", lambda: tmp_path / "runs")
+
+    exit_code = cli.main(["snapshot", "TestStudy2020Mini"])
+
+    assert exit_code == 0
+    run_dir = tmp_path / "runs" / "TestStudy2020Mini"
+    run_meta = json.loads((run_dir / "run_meta.json").read_text())
+    assert run_meta["stages"]["snapshot"]["status"] == "done"

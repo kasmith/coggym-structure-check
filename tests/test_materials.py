@@ -12,6 +12,7 @@ network, but real `git` subprocess calls), per the task brief.
 from __future__ import annotations
 
 import hashlib
+import json
 import subprocess
 from pathlib import Path
 
@@ -927,3 +928,27 @@ def test_cli_download_missing_manifest_exits_1(
     exit_code = cli.main(["download", STUDY])
 
     assert exit_code == 1
+
+
+def test_cli_download_records_materials_stage_done(
+    fake_requests: dict, materials_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Finding 2 (whole-branch review): `download` must record the
+    'materials' stage once the manifest is back-filled and re-validated,
+    mirroring headless's artifact-validity-only check -- regardless of
+    per-source download outcomes."""
+    contents = _wire_osf_happy_path(fake_requests)
+    del contents
+    monkeypatch.setattr(config, "runs_dir", lambda: tmp_path / "runs")
+    run_dir = tmp_path / "runs" / STUDY
+    run_dir.mkdir(parents=True)
+    manifest = schemas.MaterialsManifest(
+        study=STUDY, status="found", searches=[], sources=[_osf_source()], notes=[]
+    )
+    (run_dir / "materials_manifest.json").write_text(manifest.model_dump_json(indent=2))
+
+    exit_code = cli.main(["download", STUDY])
+
+    assert exit_code == 0
+    run_meta = json.loads((run_dir / "run_meta.json").read_text())
+    assert run_meta["stages"]["materials"]["status"] == "done"

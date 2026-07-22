@@ -101,21 +101,28 @@ of `done`, `stale`, `missing`, `skipped`, or `failed`, per artifact:
    every input's current content hash matches what was recorded at
    `record_stage` time, else `stale`.
 
-**Skipped-shows-as-missing caveat (interactive orchestration only).** Under
-the interactive `/check-study` skill, a skip (`paper_summary` on
-`not_found`/`paywalled`, `materials_summary` on `none_found`) is never
-written to `run_meta.json` — SKILL.md is explicit that "no CLI call records
-this; `record-stage` is Python-internal only and has no CLI entry point";
-the skipped artifact's absence plus the orchestrator's note in its final
-message *is* the record. Consequently `init-run`'s table reports a
-skipped-in-this-sense stage as plain `missing`, and re-deriving the skip
-decision (by re-reading `paper_status.json`/`materials_manifest.json`) is
-what stops a plain re-run from re-attempting it — a `missing`
-`paper_summary`/`materials_summary` is therefore not necessarily pending
-work. Under headless `run` (`headless.py`), by contrast, the skip *is*
-recorded (`rundir.record_stage(run_dir, stage, "skipped", skipped_reason=...)`
-is called directly, being ordinary in-process Python, not a CLI
-invocation), so `init-run`'s table genuinely shows `skipped` for those runs.
+**Recording is now uniform across interactive and headless orchestration.**
+Every deterministic CLI subcommand that produces a stage artifact
+(`snapshot`, `lint`, `extract-paper` on `found_local`, `download`, `render`)
+calls `rundir.record_stage` itself on success, exactly mirroring what
+`headless.py`'s equivalent `run_*_stage` functions already did in-process.
+For the judgment stages a human/interactive session drives via the Task
+tool, `python -m coggym_check record-stage <study> <stage> <status>
+[--commit C] [--reason R]` is a thin CLI wrapper over the same
+`rundir.record_stage` — SKILL.md instructs running it after every agentic
+stage's artifact is validated (`done`), and whenever the step-3e/3f skip
+rules fire (`skipped`, with `--reason`). Consequently `init-run`'s table now
+genuinely shows `skipped` (not `missing`) for a skipped stage, and staleness
+detection is live under both interactive and headless orchestration: once a
+stage has been recorded once (by either path), a later change to one of its
+recorded upstream inputs flips it to `stale` on the next `stage_status`
+call, in `init-run`'s printed table.
+
+`extract-paper`'s `not_found` outcome is the one deliberate exception: the
+CLI leaves the `paper` stage unrecorded in that case (rather than recording
+it `done`), since `not_found` is exactly the signal that the `paper-finder`
+agent (interactively) or `run_agentic_stage` (headless) still needs to run
+and record this stage itself once it reaches a terminal outcome.
 
 ## Agent model assignments
 
