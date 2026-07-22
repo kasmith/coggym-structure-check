@@ -213,3 +213,51 @@ def test_extract_paper_idempotent_rerun_overwrites_cleanly(
     ]
     assert second.text_quality == first.text_quality
     assert second.sha256 == first.sha256
+
+
+# ---------------------------------------------------------------------------
+# corrupt PDF: present but unreadable
+# ---------------------------------------------------------------------------
+
+
+def test_extract_paper_corrupt_pdf_writes_not_found_status(
+    repo_paths: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Corrupt PDF should write status=not_found with unreadable note, not crash."""
+    datasets_repo, materials_dir = repo_paths
+    # Write garbage bytes as paper.pdf
+    corrupt_pdf = datasets_repo / "studies" / STUDY / "paper.pdf"
+    corrupt_pdf.parent.mkdir(parents=True, exist_ok=True)
+    corrupt_pdf.write_bytes(b"This is not a valid PDF file")
+
+    monkeypatch.setattr(config, "runs_dir", lambda: tmp_path / "runs")
+
+    # Should not raise an exception
+    exit_code = cli.main(["extract-paper", STUDY])
+
+    # Should exit with 1 (not_found case)
+    assert exit_code == 1
+
+    # paper_status.json should exist and validate
+    artifact_path = tmp_path / "runs" / STUDY / "paper_status.json"
+    assert artifact_path.exists()
+    status = schemas.PaperStatus.model_validate_json(artifact_path.read_text())
+
+    # Status should be not_found with unreadable note
+    assert status.status == "not_found"
+    assert status.pdf_path is None
+    assert status.n_pages is None
+    assert status.text_quality is None
+    assert status.needs_direct_pdf_read is True
+    assert any("unreadable" in note.lower() for note in status.notes)
+
+    # No partial paper_text/ directory should be left behind
+    text_dir = materials_dir / STUDY / "paper_text"
+    assert not text_dir.exists()
+
+    # The dest PDF should not have been copied (it's in the source, so it remains)
+    # But if source != dest, the dest copy should be cleaned up
+    # In this case, source is studies/<study>/paper.pdf, dest is materials/<study>/paper.pdf
+    # So the dest should not exist
+    dest_pdf = materials_dir / STUDY / "paper.pdf"
+    assert not dest_pdf.exists()

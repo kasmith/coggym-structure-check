@@ -90,6 +90,9 @@ def extract_paper(study: str) -> schemas.PaperStatus:
     simply overwritten (or, in the materials-fallback case where the source
     *is* the destination, left as-is -- see the `source == dest_pdf` guard
     below, which also avoids `shutil.copyfile`'s same-file error).
+
+    If the PDF is unreadable (corrupt, encrypted, etc.), writes a structured
+    not_found status instead of crashing, cleaning up any partial materials.
     """
     resolved = _resolve_source_pdf(study)
     if resolved is None:
@@ -109,7 +112,29 @@ def extract_paper(study: str) -> schemas.PaperStatus:
 
     sha256 = hashlib.sha256(dest_pdf.read_bytes()).hexdigest()
 
-    doc = pymupdf.open(dest_pdf)
+    try:
+        doc = pymupdf.open(dest_pdf)
+    except (pymupdf.FileDataError, pymupdf.EmptyFileError) as e:
+        # PDF is corrupt, encrypted, or otherwise unreadable. Clean up
+        # partial state and return a structured not_found status.
+        if text_dir.exists():
+            shutil.rmtree(text_dir)
+        # Only delete the dest PDF if it was copied in this call (not the source itself).
+        if source_pdf != dest_pdf and dest_pdf.exists():
+            dest_pdf.unlink()
+        return schemas.PaperStatus(
+            study=study,
+            status="not_found",
+            pdf_path=None,
+            sha256=None,
+            retrieved_from=None,
+            candidates_tried=[],
+            n_pages=None,
+            text_quality=None,
+            needs_direct_pdf_read=True,
+            notes=[f"paper.pdf present but unreadable: {e}"],
+        )
+
     try:
         n_pages = doc.page_count
         n_good_pages = 0
