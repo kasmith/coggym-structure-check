@@ -42,7 +42,7 @@ These two paragraphs are binding exactly as written. In particular:
 
 ## Output contract
 
-Write `$RUN_DIR/comparison.json`. Read `docs/artifacts.md`'s `Comparison` section (and its `Discrepancy`/`Confirmation`/`Coverage`/`DiscrepancyEvidence`/`DiscrepancyLocation`/`SetConfigField`/`SetInstructionText`/`SetBlockRandomization`/`SetSliderLabels` sub-schemas) for the exact schema before writing.
+Write `$RUN_DIR/comparison.json`. Populate the required top-level `commit` field (null unless the run directory is @<shortsha>; otherwise the commit SHA) and `inputs` field (object mapping input artifact filenames to their sha256 hashes, or null if the artifact is absent). For each `Discrepancy`, assign a unique `id` (e.g. `exp1-D001`) since downstream fix-drafter links back via `discrepancy_id`. Read `docs/artifacts.md`'s `Comparison` section (and its `Discrepancy`/`Confirmation`/`Coverage`/`DiscrepancyEvidence`/`DiscrepancyLocation`/`SetConfigField`/`SetInstructionText`/`SetBlockRandomization`/`SetSliderLabels` sub-schemas) for the exact schema before writing.
 
 Before returning, run:
 ```

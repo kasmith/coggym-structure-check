@@ -36,7 +36,7 @@ Write `evidence` as a short quote or description of *why* you assigned that rela
 
 **Never fetch `coggym.org`** — it returns 403 to automated fetchers and is not a source of study materials anyway; don't include it as a search target or a candidate URL.
 
-Write `$RUN_DIR/materials_manifest.json` with every source you found, each `download_status: "pending"`, `local_path: null`, `sha256_or_commit: null`. Set the manifest's own `status` field to `"found"` (at least one plausible source), `"partial"` (some leads but nothing confident), or `"none_found"` (nothing at all — see failure modes).
+Write `$RUN_DIR/materials_manifest.json` with every source you found, each `download_status: "pending"`, `local_path: null`, `sha256_or_commit: null`. For each source, set `kind` to classify the URL: `osf` for OSF node URLs (osf.io/<id>), `github` for GitHub repository URLs, or `other_url` for anything else (direct file links, lab-page zips). The downloader uses `kind` to route to the correct fetcher — a wrong kind silently routes the download to the wrong fetcher, so classify carefully. Set the manifest's own `status` field to `"found"` (at least one plausible source), `"partial"` (some leads but nothing confident), or `"none_found"` (nothing at all — see failure modes).
 
 Then run:
 ```
