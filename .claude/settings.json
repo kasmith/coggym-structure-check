@@ -1,14 +1,14 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python -m coggym_check *)",
-      "Bash(.venv/bin/python -m coggym_check *)",
+      "Bash(python -m coggym_check*)",
+      "Bash(.venv/bin/python -m coggym_check*)",
       "Bash(git -C ../cog-gym-datasets show*)",
       "Bash(git -C ../cog-gym-datasets log*)",
       "Bash(git -C ../cog-gym-datasets ls-tree*)",
       "Bash(git -C ../cog-gym-datasets rev-parse*)",
       "Bash(git -C ../cog-gym-datasets status*)",
-      "Bash(git -C ../cog-gym-datasets branch*)",
+      "Bash(git -C ../cog-gym-datasets branch --list*)",
       "Read",
       "Grep",
       "Glob"

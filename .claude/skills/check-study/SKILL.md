@@ -60,8 +60,12 @@ downstream stage from `missing` to `stale` because its input hash changed).
 - Otherwise: walk the registry in order. For each stage, run it if its
   current status is `missing` or `stale`, or if `--force` was passed (even
   when `done`). Leave a stage alone if it is `done` (and not forced). A
-  stage previously `skipped` (per the skip rules in step 4) stays skipped on
-  a plain re-run — only `--force` or `--stage` re-attempts it.
+  stage previously `skipped` (per the skip rules in step 3e/3f) stays skipped
+  on a plain re-run — only `--force` or `--stage` re-attempts it. Note that
+  skipped stages appear as `missing` in the table; the skip decision is
+  re-derived from `paper_status.json` / `materials_manifest.json` each time
+  the stage is reached, so a `missing` `paper_summary`/`materials_summary` is
+  not necessarily pending work.
 
 ## 3. Run each stage
 
