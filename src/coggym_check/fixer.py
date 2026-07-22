@@ -243,6 +243,11 @@ def _compute_new_content(old_text: str, fix: FixOp) -> str:
                         slider_config["min"] = fix.new_min
                     if fix.new_max is not None:
                         slider_config["max"] = fix.new_max
+                    return
+            raise ApplyFixesError(
+                f"query tag {fix.query_tag!r} not found on trial {fix.trial_id!r} "
+                "while applying a fix"
+            )
 
         return _mutate_jsonl_text(old_text, fix.trial_id, _mutate_slider)
     raise ValueError(f"unknown fix op {fix.op!r}")  # pragma: no cover — exhaustive union
@@ -336,13 +341,12 @@ def _print_dry_run_preview(
 
 
 def _pre_fix_error_count(run_dir: Path) -> int:
+    """Read the run dir's pre-fix `lint.json`. Callers must have already
+    confirmed it exists (`apply_fixes` refuses up front otherwise) -- there
+    is no silent "assume 0" fallback here, since that would make the
+    regression check below spuriously fire against whatever pre-existing
+    findings the study already had."""
     lint_path = run_dir / "lint.json"
-    if not lint_path.exists():
-        print(
-            f"warning: {lint_path} not found; treating pre-fix error count as 0",
-            file=sys.stderr,
-        )
-        return 0
     report = schemas.LintReport.model_validate_json(lint_path.read_text())
     return sum(1 for f in report.findings if f.level == "error")
 
@@ -380,6 +384,14 @@ def apply_fixes(run_dir: Path, *, dry_run: bool = False, force_branch: bool = Fa
         _print_dry_run_preview(datasets_repo, base, study, fix_plan.fixes)
         return 0
 
+    lint_baseline_path = run_dir / "lint.json"
+    if not lint_baseline_path.exists():
+        print(
+            f"no lint baseline in run dir; run `python -m coggym_check lint {study}` first",
+            file=sys.stderr,
+        )
+        return 1
+
     if _branch_exists(datasets_repo, branch):
         if not force_branch:
             print(
@@ -390,9 +402,9 @@ def apply_fixes(run_dir: Path, *, dry_run: bool = False, force_branch: bool = Fa
         _delete_branch(datasets_repo, branch)
 
     worktree_path = run_dir / ".worktree"
-    _add_worktree(datasets_repo, worktree_path, branch, base)
     success = False
     try:
+        _add_worktree(datasets_repo, worktree_path, branch, base)
         try:
             _apply_and_commit_groups(worktree_path, study, fix_plan.fixes)
         except ApplyFixesError as exc:

@@ -484,3 +484,92 @@ def test_pinned_commit_run_dir_uses_pinned_base_not_current_head(
     branch = f"fix/{STUDY}-structure"
     parent = _git(repo.root, "rev-parse", f"{branch}~1").strip()
     assert parent == pinned_sha
+
+
+# ---------------------------------------------------------------------------
+# review round 1: unconditional worktree-add cleanup
+# ---------------------------------------------------------------------------
+
+
+def test_add_worktree_failure_triggers_full_cleanup(repo, run_dir, monkeypatch) -> None:
+    """If `_add_worktree` blows up after partially registering the branch
+    against the real datasets repo (e.g. `git worktree add` fails after the
+    branch ref is created), the branch must not be left dangling -- the
+    `finally` cleanup must run even though the failure happened in the very
+    call that creates the worktree/branch in the first place."""
+    _write_fix_plan(run_dir, [_instruction_text_fix()])
+    _write_lint_baseline(run_dir, repo.root)
+    branch = f"fix/{STUDY}-structure"
+    before = _repo_status(repo.root)
+
+    def fake_add_worktree(repo_path: Path, path: Path, branch_name: str, base: str) -> None:
+        # Simulate `git worktree add` partially registering the branch
+        # before failing (e.g. a disk/permissions error on the worktree
+        # directory itself, after the branch ref already exists).
+        fixer._git(repo_path, "branch", branch_name, base)
+        raise subprocess.CalledProcessError(1, ["git", "worktree", "add"])
+
+    monkeypatch.setattr(fixer, "_add_worktree", fake_add_worktree)
+
+    with pytest.raises(subprocess.CalledProcessError):
+        fixer.apply_fixes(run_dir)
+
+    assert not fixer._branch_exists(repo.root, branch)
+    listing = _git(repo.root, "worktree", "list", "--porcelain")
+    assert ".worktree" not in listing
+    assert not (run_dir / ".worktree").exists()
+    assert _repo_status(repo.root) == before
+
+
+# ---------------------------------------------------------------------------
+# review round 1: missing lint.json baseline is refused, not assumed 0
+# ---------------------------------------------------------------------------
+
+
+def test_missing_lint_baseline_refuses_before_branch_creation(repo, run_dir, capsys) -> None:
+    _write_fix_plan(run_dir, [_instruction_text_fix()])
+    # deliberately no lint.json in the run dir
+    before = _repo_status(repo.root)
+
+    code = fixer.apply_fixes(run_dir)
+
+    assert code == 1
+    err = capsys.readouterr().err
+    assert "lint baseline" in err
+
+    branch = f"fix/{STUDY}-structure"
+    assert not fixer._branch_exists(repo.root, branch)
+    assert not (run_dir / ".worktree").exists()
+    assert _repo_status(repo.root) == before
+
+
+# ---------------------------------------------------------------------------
+# review round 1: unmatched query_tag is a hard error, not a silent no-op
+# ---------------------------------------------------------------------------
+
+
+def test_set_slider_labels_unmatched_query_tag_aborts_cleanly(repo, run_dir) -> None:
+    fix = schemas.FixEntry(
+        fix=schemas.SetSliderLabels(
+            op="set_slider_labels",
+            experiment="exp1",
+            trial_id="scenario_001",
+            query_tag="does_not_exist",
+            new_labels=[{"value": 0, "label": "none"}],
+            new_min=0,
+            new_max=10,
+        ),
+        discrepancy_id="d8",
+        commit_message=f"fix({STUDY}/exp1): correct slider labels",
+    )
+    _write_fix_plan(run_dir, [fix])
+    _write_lint_baseline(run_dir, repo.root)
+    before = _repo_status(repo.root)
+
+    code = fixer.apply_fixes(run_dir)
+
+    assert code == 1
+    branch = f"fix/{STUDY}-structure"
+    assert not fixer._branch_exists(repo.root, branch)
+    assert not (run_dir / ".worktree").exists()
+    assert _repo_status(repo.root) == before
