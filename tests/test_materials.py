@@ -758,6 +758,104 @@ def test_filesystem_collision_marks_source_failed_and_continues_others(
 
 
 # ---------------------------------------------------------------------------
+# NUL bytes in remote names bypass sanitization (review finding fix)
+# ---------------------------------------------------------------------------
+
+
+def test_osf_entry_with_nul_byte_in_name_marks_failed_without_raising(
+    fake_requests: dict, materials_root: Path
+) -> None:
+    """An OSF `attributes.name` containing an embedded NUL byte (`\x00`)
+    previously bypassed _is_safe_path_segment and caused ValueError from
+    Path.resolve(). It must be rejected and marked failed, not raise."""
+    node_id = "evil4"
+    root_url = f"https://api.osf.io/v2/nodes/{node_id}/files/osfstorage/"
+    dl_url = "https://osf.io/download/evil4.txt"
+    evil_name = "evil\x00.txt"  # NUL byte in the middle
+    fake_requests[root_url] = FakeResponse(
+        json_data={
+            "data": [_osf_entry(evil_name, kind="file", download=dl_url)],
+            "links": {"next": None},
+        }
+    )
+    fake_requests[dl_url] = _content_response(b"should not be written")
+    manifest = schemas.MaterialsManifest(
+        study=STUDY,
+        status="found",
+        searches=[],
+        sources=[_osf_source(url=f"https://osf.io/{node_id}/")],
+        notes=[],
+    )
+
+    # This should NOT raise ValueError; it should mark the source failed.
+    updated = materials.download_manifest(manifest)
+
+    assert updated.sources[0].download_status == "failed"
+    # Verify the file was never written.
+    assert not (materials_root / STUDY / "osf" / node_id).exists()
+    # Verify some note about the unsafe name was recorded.
+    assert any("unsafe" in note.lower() for note in updated.notes)
+
+
+def test_github_url_with_nul_byte_in_repo_name_handles_gracefully(
+    tmp_path: Path, materials_root: Path
+) -> None:
+    """A GitHub URL whose basename contains an embedded NUL byte should
+    either be sanitized by _repo_name_from_url (falling back to "repo")
+    or fail gracefully when attempting mkdir. Either way, should not raise
+    ValueError out of download_manifest."""
+    evil_url = "file:///tmp/repo\x00evil.git"
+    manifest = schemas.MaterialsManifest(
+        study=STUDY,
+        status="found",
+        searches=[],
+        sources=[_github_source(evil_url)],
+        notes=[],
+    )
+
+    # Should NOT raise; handles gracefully (either sanitized or failed).
+    updated = materials.download_manifest(manifest)
+
+    # Either the source failed, or it fell back to the safe name "repo"
+    # (which itself will fail because the URL doesn't exist).
+    source = updated.sources[0]
+    assert source.download_status in ("failed", "ok")  # ok if fallback worked and URL existed
+
+
+def test_other_url_with_nul_byte_in_basename_marks_failed_without_raising(
+    fake_requests: dict, materials_root: Path
+) -> None:
+    """An other_url whose basename contains an embedded NUL byte should
+    either be sanitized by _repo_name_from_url fallback (becoming "download.bin")
+    or fail gracefully. Either way, should not raise ValueError."""
+    evil_url = "https://example.com/evil\x00.bin"
+    content = b"should not be written"
+    fake_requests[evil_url] = _content_response(content)
+    source = schemas.MaterialsSource(
+        kind="other_url",
+        url=evil_url,
+        relation="uncertain",
+        evidence="",
+        local_path=None,
+        download_status="pending",
+        sha256_or_commit=None,
+    )
+    manifest = schemas.MaterialsManifest(
+        study=STUDY, status="found", searches=[], sources=[source], notes=[]
+    )
+
+    # Should NOT raise; handles gracefully (either sanitized or failed).
+    updated = materials.download_manifest(manifest)
+
+    result = updated.sources[0]
+    # Either failed, or fell back to "download.bin" safe name.
+    assert result.download_status in ("failed", "ok")
+    if result.download_status == "failed":
+        # Should have a note about the download.
+        assert any("failed" in note.lower() for note in updated.notes)
+
+
+# ---------------------------------------------------------------------------
 # CLI `download` subcommand
 # ---------------------------------------------------------------------------
 

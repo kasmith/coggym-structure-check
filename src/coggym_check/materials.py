@@ -94,10 +94,10 @@ def _is_safe_path_segment(name: str) -> bool:
     Sanitization policy (defense in depth, layer 1 -- see module docstring):
     every path segment sourced from third-party-controlled metadata (an OSF
     `attributes.name`, a URL basename) is rejected if it is empty, `.`, `..`,
-    or contains a path separator (`/` or `\\`). Rejecting any segment
-    containing `/` also covers the case where the segment is itself an
-    absolute path (`pathlib` resets to an absolute RHS when joined with
-    `/`, which is exactly the traversal this guards against) and the case
+    contains a path separator (`/` or `\\`), or contains an embedded NUL byte.
+    Rejecting any segment containing `/` also covers the case where the segment
+    is itself an absolute path (`pathlib` resets to an absolute RHS when joined
+    with `/`, which is exactly the traversal this guards against) and the case
     where a single hostile `name` embeds multiple `../` components.
 
     Callers that consume this: reject/skip the individual entry (OSF file
@@ -106,7 +106,7 @@ def _is_safe_path_segment(name: str) -> bool:
     layer 2 is the `resolve()` + `is_relative_to()` containment check in
     `_download_within_cap`.
     """
-    return bool(name) and name not in (".", "..") and "/" not in name and "\\" not in name
+    return bool(name) and name not in (".", "..") and "/" not in name and "\\" not in name and "\x00" not in name
 
 
 def _manifest_sha256(entries: list[tuple[str, str]]) -> str:
@@ -264,7 +264,7 @@ def _download_osf_source(
             continue
         try:
             result = _download_within_cap(download_url, dest_dir / relpath, total_bytes, dest_dir)
-        except (requests.RequestException, OSError, _PathEscapeError) as exc:
+        except (requests.RequestException, OSError, ValueError, _PathEscapeError) as exc:
             notes.append(f"osf source {source.url}: failed to download {relpath} ({exc})")
             return source.model_copy(update={"download_status": "failed"}), notes
         if result is None:
@@ -364,7 +364,7 @@ def _download_github_source(
 
     try:
         dest_dir.parent.mkdir(parents=True, exist_ok=True)
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
         notes.append(f"github source {source.url}: could not create {dest_dir.parent} ({exc})")
         return source.model_copy(update={"download_status": "failed"}), notes
 
@@ -376,7 +376,7 @@ def _download_github_source(
             timeout=_GIT_CLONE_TIMEOUT_S,
             check=True,
         )
-    except (subprocess.CalledProcessError, OSError, subprocess.TimeoutExpired) as exc:
+    except (subprocess.CalledProcessError, OSError, ValueError, subprocess.TimeoutExpired) as exc:
         notes.append(f"github source {source.url}: clone failed ({exc})")
         return source.model_copy(update={"download_status": "failed"}), notes
 
@@ -413,7 +413,7 @@ def _download_other_url_source(
 
     try:
         result = _download_within_cap(source.url, dest_dir / filename, 0, dest_dir)
-    except (requests.RequestException, OSError, _PathEscapeError) as exc:
+    except (requests.RequestException, OSError, ValueError, _PathEscapeError) as exc:
         notes.append(f"other_url source {source.url}: failed to download ({exc})")
         return source.model_copy(update={"download_status": "failed"}), notes
 
