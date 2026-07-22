@@ -5,8 +5,9 @@ paper extraction, materials download, etc.) is implemented in its own task
 so the entrypoint doesn't need renegotiating each time. `validate-artifact`,
 `export-schemas` (task 2), `snapshot` (task 3, dataset.py), `lint` (task 4,
 lint.py), `init-run` (task 5, rundir.py), `extract-paper` (task 6, paper.py),
-and `download` (task 7, materials.py) are real here; every other subcommand
-is still a placeholder until its corresponding task lands.
+`download` (task 7, materials.py), and `render`/`apply-fixes` (task 8,
+report.py/fixer.py) are real here; only `run` (the headless full-pipeline
+orchestrator, task 11) is still a placeholder.
 
 Why proper subparsers instead of the REMAINDER-stub pattern for these:
 they have real, differing argument signatures (a positional path; an
@@ -20,20 +21,17 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
-from coggym_check import config, dataset, lint, materials, paper, rundir, schemas
+from coggym_check import config, dataset, fixer, lint, materials, paper, report, rundir, schemas
 
 #: Pipeline-stage subcommands with no implementation yet (see
 #: constraints.md's stage table). Each prints "not implemented" and exits 2.
-STUB_SUBCOMMANDS = (
-    "render",
-    "apply-fixes",
-    "run",
-)
+STUB_SUBCOMMANDS = ("run",)
 
 
 def _cmd_validate_artifact(args: argparse.Namespace) -> int:
@@ -236,6 +234,71 @@ def _cmd_download(args: argparse.Namespace) -> int:
     return 0 if (n_pending == 0 or ok_count > 0) else 1
 
 
+def _now_iso() -> str:
+    """ISO-8601 UTC timestamp, matching dataset.py's/rundir.py's `_now_iso`
+    format -- kept as a third private copy rather than a shared import
+    since it's one line and each module already has its own."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _load_optional_artifact(path: Path, model: type[BaseModel]) -> BaseModel | None:
+    """Read+validate `path` against `model`, or `None` if `path` doesn't
+    exist -- the "degrade gracefully" half of `render`'s contract (task-8
+    brief): `fix_plan.json`/`paper_status.json`/`materials_manifest.json`
+    are each optional inputs to a render."""
+    if not path.exists():
+        return None
+    return model.model_validate_json(path.read_text())
+
+
+def _cmd_render(args: argparse.Namespace) -> int:
+    """Render a study's `comparison.json` (+ whichever of `fix_plan.json`/
+    `paper_status.json`/`materials_manifest.json` exist) into `report.md` +
+    `pr.md` in its run dir.
+
+    Exit codes: 1 if `comparison.json` itself is missing (the one required
+    input -- report.py's `render()` has nothing to render without it), else
+    0. Missing optional artifacts are not an error (`report.py` renders a
+    "not available" note in their place instead).
+    """
+    run_dir = rundir.run_dir_for(args.study, args.commit)
+    comparison_path = run_dir / "comparison.json"
+    if not comparison_path.exists():
+        print(
+            f"{comparison_path}: not found; run the structure-comparator agent first",
+            file=sys.stderr,
+        )
+        return 1
+    comparison = schemas.Comparison.model_validate_json(comparison_path.read_text())
+
+    fix_plan = _load_optional_artifact(run_dir / "fix_plan.json", schemas.FixPlan)
+    paper_status = _load_optional_artifact(run_dir / "paper_status.json", schemas.PaperStatus)
+    materials_manifest = _load_optional_artifact(
+        run_dir / "materials_manifest.json", schemas.MaterialsManifest
+    )
+
+    report_md, pr_md = report.render(
+        comparison, fix_plan, paper_status, materials_manifest, _now_iso()
+    )
+    (run_dir / "report.md").write_text(report_md)
+    (run_dir / "pr.md").write_text(pr_md)
+
+    print(str(run_dir))
+    return 0
+
+
+def _cmd_apply_fixes(args: argparse.Namespace) -> int:
+    """Apply a study's `fix_plan.json` via `fixer.apply_fixes` -- see that
+    module's docstring for the full worktree/branch/commit/lint-regression
+    lifecycle. This subcommand is a thin locate-the-run-dir wrapper; all
+    the safety-critical logic lives in fixer.py so it can be unit-tested
+    directly against a throwaway git repo (tests/test_fixer.py) without
+    going through argparse.
+    """
+    run_dir = rundir.run_dir_for(args.study, args.commit)
+    return fixer.apply_fixes(run_dir, dry_run=args.dry_run, force_branch=args.force_branch)
+
+
 def _print_stage_status_table(statuses: dict[str, str]) -> None:
     """Print `stage_status`'s result as a plain aligned table, in pipeline order."""
     header = ("STAGE", "STATUS", "ARTIFACT")
@@ -342,6 +405,46 @@ def build_parser() -> argparse.ArgumentParser:
         help="Pin to a datasets-repo commit (run dir becomes runs/<study>@<shortsha>).",
     )
     download_parser.set_defaults(func=_cmd_download)
+
+    render_parser = subparsers.add_parser(
+        "render",
+        help=(
+            "Render comparison.json (+ optional fix_plan/paper_status/"
+            "materials_manifest) into report.md + pr.md."
+        ),
+    )
+    render_parser.add_argument("study", help="Study folder name under studies/.")
+    render_parser.add_argument(
+        "--commit",
+        default=None,
+        help="Pin to a datasets-repo commit (run dir becomes runs/<study>@<shortsha>).",
+    )
+    render_parser.set_defaults(func=_cmd_render)
+
+    apply_fixes_parser = subparsers.add_parser(
+        "apply-fixes",
+        help=(
+            "Apply fix_plan.json's fixes to the datasets repo via a git "
+            "worktree + branch (never the main working tree)."
+        ),
+    )
+    apply_fixes_parser.add_argument("study", help="Study folder name under studies/.")
+    apply_fixes_parser.add_argument(
+        "--commit",
+        default=None,
+        help="Pin to a datasets-repo commit (run dir becomes runs/<study>@<shortsha>).",
+    )
+    apply_fixes_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview each fix as a diff; write nothing, create no branch/worktree.",
+    )
+    apply_fixes_parser.add_argument(
+        "--force-branch",
+        action="store_true",
+        help="Delete and recreate fix/<study>-structure if it already exists.",
+    )
+    apply_fixes_parser.set_defaults(func=_cmd_apply_fixes)
 
     init_run_parser = subparsers.add_parser(
         "init-run",
