@@ -4,9 +4,9 @@ Why stubs remain for most subcommands: each pipeline stage (snapshot, lint,
 paper extraction, materials download, etc.) is implemented in its own task
 so the entrypoint doesn't need renegotiating each time. `validate-artifact`,
 `export-schemas` (task 2), `snapshot` (task 3, dataset.py), `lint` (task 4,
-lint.py), `init-run` (task 5, rundir.py), and `extract-paper` (task 6,
-paper.py) are real here; every other subcommand is still a placeholder
-until its corresponding task lands.
+lint.py), `init-run` (task 5, rundir.py), `extract-paper` (task 6, paper.py),
+and `download` (task 7, materials.py) are real here; every other subcommand
+is still a placeholder until its corresponding task lands.
 
 Why proper subparsers instead of the REMAINDER-stub pattern for these:
 they have real, differing argument signatures (a positional path; an
@@ -25,12 +25,11 @@ from typing import Sequence
 
 from pydantic import ValidationError
 
-from coggym_check import config, dataset, lint, paper, rundir, schemas
+from coggym_check import config, dataset, lint, materials, paper, rundir, schemas
 
 #: Pipeline-stage subcommands with no implementation yet (see
 #: constraints.md's stage table). Each prints "not implemented" and exits 2.
 STUB_SUBCOMMANDS = (
-    "download",
     "render",
     "apply-fixes",
     "run",
@@ -188,6 +187,55 @@ def _cmd_extract_paper(args: argparse.Namespace) -> int:
     return 0 if status.status == "found_local" else 1
 
 
+def _cmd_download(args: argparse.Namespace) -> int:
+    """Download every `pending` source in a study's `materials_manifest.json`.
+
+    The manifest itself is written by the `materials-scout` agent (Stage 2)
+    into the run dir; this subcommand only locates it there, downloads
+    pending sources (materials.download_manifest), and rewrites the file
+    with `local_path`/`sha256_or_commit`/`download_status` back-filled.
+
+    Exit codes (task-7 brief): 0 if at least one previously-pending source
+    ended up `ok`, or if there were no pending sources to begin with; 1 if
+    there were pending sources and none of them ended up `ok` (whether they
+    failed outright or were skipped as too large). 1 also if the manifest
+    itself isn't there yet -- a usage/ordering error, not a data error, but
+    exit 1 is the simplest signal that this run dir isn't ready for
+    `download` yet.
+    """
+    run_dir = rundir.run_dir_for(args.study, args.commit)
+    manifest_path = run_dir / "materials_manifest.json"
+    if not manifest_path.exists():
+        print(
+            f"{manifest_path}: not found; run the materials-scout agent first",
+            file=sys.stderr,
+        )
+        return 1
+
+    manifest = schemas.MaterialsManifest.model_validate_json(manifest_path.read_text())
+    n_pending = sum(1 for s in manifest.sources if s.download_status == "pending")
+
+    updated = materials.download_manifest(manifest)
+
+    payload = updated.model_dump_json(indent=2)
+    schemas.MaterialsManifest.model_validate_json(payload)
+    manifest_path.write_text(payload)
+
+    ok_count = sum(
+        1
+        for orig, new in zip(manifest.sources, updated.sources)
+        if orig.download_status == "pending" and new.download_status == "ok"
+    )
+
+    if n_pending == 0:
+        print("no pending sources")
+    else:
+        print(f"{ok_count}/{n_pending} pending sources downloaded ok")
+    print(str(run_dir))
+
+    return 0 if (n_pending == 0 or ok_count > 0) else 1
+
+
 def _print_stage_status_table(statuses: dict[str, str]) -> None:
     """Print `stage_status`'s result as a plain aligned table, in pipeline order."""
     header = ("STAGE", "STATUS", "ARTIFACT")
@@ -282,6 +330,18 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     extract_paper_parser.set_defaults(func=_cmd_extract_paper)
+
+    download_parser = subparsers.add_parser(
+        "download",
+        help="Download pending sources from a study's materials_manifest.json.",
+    )
+    download_parser.add_argument("study", help="Study folder name under studies/.")
+    download_parser.add_argument(
+        "--commit",
+        default=None,
+        help="Pin to a datasets-repo commit (run dir becomes runs/<study>@<shortsha>).",
+    )
+    download_parser.set_defaults(func=_cmd_download)
 
     init_run_parser = subparsers.add_parser(
         "init-run",
