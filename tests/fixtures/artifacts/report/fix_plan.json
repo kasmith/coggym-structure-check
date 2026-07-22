@@ -1,0 +1,23 @@
+{
+  "study": "TestStudy2020Mini",
+  "fixes": [
+    {
+      "fix": {
+        "op": "set_instruction_text",
+        "experiment": "exp1",
+        "record_id": "instruction_intro",
+        "new_value": "Welcome to the study. You will watch three short clips."
+      },
+      "discrepancy_id": "d1",
+      "commit_message": "fix(TestStudy2020Mini/exp1): correct instruction text to match verbatim materials wording"
+    }
+  ],
+  "dropped": [
+    {
+      "discrepancy_id": "d4",
+      "reason": "DOI correction touches citation metadata read by external indexers; held back for a human to confirm the paper's printed DOI resolves before changing it"
+    }
+  ],
+  "pr_title": "Fix structure discrepancies in TestStudy2020Mini",
+  "pr_body": "Drafted after comparing TestStudy2020Mini against its paper and materials."
+}

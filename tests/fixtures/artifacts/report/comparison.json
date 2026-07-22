@@ -1,0 +1,107 @@
+{
+  "study": "TestStudy2020Mini",
+  "commit": "1a2b3c4d5e6f7890abcdef1234567890abcdef12",
+  "inputs": {"study_snapshot.json": "sha-snapshot-1", "lint.json": "sha-lint-1"},
+  "coverage": {"paper": "full", "materials": "partial"},
+  "experiments": [
+    {
+      "folder": "exp1",
+      "discrepancies": [
+        {
+          "id": "d1",
+          "category": "instruction_text",
+          "field": "instruction_texts.instruction_intro",
+          "location": {"file": "instruction.jsonl", "record_id": "instruction_intro", "json_path": null},
+          "paper_value": "Participants were welcomed and told they would watch three scenarios.",
+          "materials_value": "Welcome to the study. You will watch three short clips.",
+          "coggym_value": "Welcome to the study. You will watch three short scenarios.",
+          "severity": "minor",
+          "clear_cut": true,
+          "evidence": [
+            {"source": "materials", "quote": "Welcome to the study. You will watch three short clips.", "ref": "materials/osf/abc12/instructions.txt:1"}
+          ],
+          "recommendation": "fix",
+          "rationale": "coggym text should match verbatim materials wording (\"clips\"), not the paraphrase currently in place (\"scenarios\")",
+          "proposed_fix": {
+            "op": "set_instruction_text",
+            "experiment": "exp1",
+            "record_id": "instruction_intro",
+            "new_value": "Welcome to the study. You will watch three short clips."
+          }
+        },
+        {
+          "id": "d2",
+          "category": "randomization",
+          "field": "experimentFlow.0.block_randomization.1",
+          "location": {"file": "config.json", "record_id": null, "json_path": "experimentFlow[0].block_randomization[1]"},
+          "paper_value": null,
+          "materials_value": "trial order is randomized per participant",
+          "coggym_value": false,
+          "severity": "major",
+          "clear_cut": false,
+          "evidence": [
+            {"source": "materials", "quote": "trials = shuffle(trials);", "ref": "materials/osf/abc12/exp.js:14"}
+          ],
+          "recommendation": "flag",
+          "rationale": "materials code shuffles the trial array, but it is unclear whether this ran in the deployed version or only a pilot build",
+          "proposed_fix": null
+        }
+      ],
+      "confirmations": [
+        {"field": "n_conditions", "value": 1, "evidence_ref": "paper p.4"},
+        {"field": "n_trials", "value": 3, "evidence_ref": "paper p.4"},
+        {"field": "n_instructions", "value": 2, "evidence_ref": "coggym config.json"},
+        {"field": "response_types", "value": ["multi-slider"], "evidence_ref": "paper p.5"}
+      ]
+    },
+    {
+      "folder": "exp2",
+      "discrepancies": [
+        {
+          "id": "d3",
+          "category": "response_scale",
+          "field": "queries_by_tag.causal_rating.slider.labels",
+          "location": {"file": "trial.jsonl", "record_id": "clip_001", "json_path": "queries[0].slider_config.labels"},
+          "paper_value": "scale anchored 'definitely not the cause' to 'definitely the cause'",
+          "materials_value": null,
+          "coggym_value": [{"value": 1, "label": "not at all"}, {"value": 7, "label": "very much"}],
+          "severity": "critical",
+          "clear_cut": false,
+          "evidence": [
+            {"source": "paper", "quote": "the scale ran from \"definitely not the cause\" to \"definitely the cause\"", "ref": "p.6 §Method"}
+          ],
+          "recommendation": "flag",
+          "rationale": "no materials evidence to confirm exact anchor wording, so this is not clear-cut enough to auto-fix despite the paper quote",
+          "proposed_fix": null
+        },
+        {
+          "id": "d4",
+          "category": "citation",
+          "field": "citation.paperDOI",
+          "location": {"file": "config.json", "record_id": null, "json_path": "paperDOI"},
+          "paper_value": "10.1000/test-correct",
+          "materials_value": null,
+          "coggym_value": "10.1000/test",
+          "severity": "minor",
+          "clear_cut": true,
+          "evidence": [
+            {"source": "paper", "quote": "https://doi.org/10.1000/test-correct", "ref": "p.1 header"}
+          ],
+          "recommendation": "fix",
+          "rationale": "paperDOI does not match the DOI printed on the paper itself",
+          "proposed_fix": {
+            "op": "set_config_field",
+            "experiment": "exp2",
+            "key_path": "paperDOI",
+            "new_value": "10.1000/test-correct"
+          }
+        }
+      ],
+      "confirmations": [
+        {"field": "n_conditions", "value": 1, "evidence_ref": "paper p.6"}
+      ]
+    }
+  ],
+  "needs_human_judgment_count": 2,
+  "clear_cut_count": 2
+}

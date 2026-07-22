@@ -1,0 +1,31 @@
+{
+  "study": "DegradedStudy2020Bad",
+  "commit": null,
+  "inputs": {"study_snapshot.json": "sha-snapshot-2", "lint.json": "sha-lint-2"},
+  "coverage": {"paper": "none", "materials": "none"},
+  "experiments": [
+    {
+      "folder": "exp1",
+      "discrepancies": [
+        {
+          "id": "d1",
+          "category": "other",
+          "field": "n_trials_in_jsonl",
+          "location": {"file": "trial.jsonl", "record_id": null, "json_path": null},
+          "paper_value": null,
+          "materials_value": null,
+          "coggym_value": 3,
+          "severity": "info",
+          "clear_cut": false,
+          "evidence": [],
+          "recommendation": "flag",
+          "rationale": "no paper or materials evidence available; nothing to compare this study's structure against",
+          "proposed_fix": null
+        }
+      ],
+      "confirmations": []
+    }
+  ],
+  "needs_human_judgment_count": 1,
+  "clear_cut_count": 0
+}

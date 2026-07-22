@@ -1,0 +1,28 @@
+{
+  "study": "TestStudy2020Mini",
+  "status": "partial",
+  "searches": [
+    {"engine": "google", "query": "TestStudy2020Mini materials OSF", "useful": true}
+  ],
+  "sources": [
+    {
+      "kind": "osf",
+      "url": "https://osf.io/abc12/",
+      "relation": "official_materials",
+      "evidence": "linked from paper acknowledgments",
+      "local_path": "materials/TestStudy2020Mini/osf/abc12",
+      "download_status": "ok",
+      "sha256_or_commit": "deadbeef"
+    },
+    {
+      "kind": "github",
+      "url": "https://github.com/example/teststudy-materials",
+      "relation": "uncertain",
+      "evidence": "found via web search, not linked from the paper",
+      "local_path": null,
+      "download_status": "failed",
+      "sha256_or_commit": null
+    }
+  ],
+  "notes": ["github source failed: repository appears to have been deleted"]
+}
