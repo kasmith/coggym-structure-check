@@ -4,8 +4,9 @@ Why stubs remain for most subcommands: each pipeline stage (snapshot, lint,
 paper extraction, materials download, etc.) is implemented in its own task
 so the entrypoint doesn't need renegotiating each time. `validate-artifact`,
 `export-schemas` (task 2), `snapshot` (task 3, dataset.py), `lint` (task 4,
-lint.py), and `init-run` (task 5, rundir.py) are real here; every other
-subcommand is still a placeholder until its corresponding task lands.
+lint.py), `init-run` (task 5, rundir.py), and `extract-paper` (task 6,
+paper.py) are real here; every other subcommand is still a placeholder
+until its corresponding task lands.
 
 Why proper subparsers instead of the REMAINDER-stub pattern for these:
 they have real, differing argument signatures (a positional path; an
@@ -24,12 +25,11 @@ from typing import Sequence
 
 from pydantic import ValidationError
 
-from coggym_check import config, dataset, lint, rundir, schemas
+from coggym_check import config, dataset, lint, paper, rundir, schemas
 
 #: Pipeline-stage subcommands with no implementation yet (see
 #: constraints.md's stage table). Each prints "not implemented" and exits 2.
 STUB_SUBCOMMANDS = (
-    "extract-paper",
     "download",
     "render",
     "apply-fixes",
@@ -157,6 +157,37 @@ def _cmd_lint(args: argparse.Namespace) -> int:
     return 1 if any(f.level == "error" for f in report.findings) else 0
 
 
+def _cmd_extract_paper(args: argparse.Namespace) -> int:
+    """Locate+extract a study's paper.pdf and write a validated `paper_status.json`.
+
+    `paper.pdf` is always read from the datasets repo's working tree (see
+    `paper.py`'s module docstring): `--commit` here only selects which run
+    dir (`runs/<study>` vs `runs/<study>@<shortsha>`) the artifact lands in,
+    it does not pin which PDF gets read.
+
+    Exit codes: 0 if `paper.pdf` was found and extracted (`status ==
+    "found_local"`), 1 if it wasn't (`status == "not_found"`) -- mirroring
+    `_cmd_lint`'s "1 means something downstream still needs attention"
+    convention, here signaling that the `paper-finder` agent should run
+    before later stages proceed. Either outcome is a normal, valid artifact
+    write, not a usage error.
+    """
+    status = paper.extract_paper(args.study)
+
+    payload = status.model_dump_json(indent=2)
+    schemas.PaperStatus.model_validate_json(payload)
+
+    run_dir = rundir.run_dir_for(status.study, args.commit)
+    (run_dir / "paper_status.json").write_text(payload)
+
+    print(f"status: {status.status}")
+    if status.text_quality is not None:
+        print(f"text_quality: {status.text_quality:.3f}")
+    print(str(run_dir))
+
+    return 0 if status.status == "found_local" else 1
+
+
 def _print_stage_status_table(statuses: dict[str, str]) -> None:
     """Print `stage_status`'s result as a plain aligned table, in pipeline order."""
     header = ("STAGE", "STATUS", "ARTIFACT")
@@ -236,6 +267,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="Pin to a datasets-repo commit (reads via `git show`, never checks out).",
     )
     lint_parser.set_defaults(func=_cmd_lint)
+
+    extract_paper_parser = subparsers.add_parser(
+        "extract-paper",
+        help="Locate+extract a study's paper.pdf and write a validated paper_status.json.",
+    )
+    extract_paper_parser.add_argument("study", help="Study folder name under studies/.")
+    extract_paper_parser.add_argument(
+        "--commit",
+        default=None,
+        help=(
+            "Pin the run dir to a datasets-repo commit (runs/<study>@<shortsha>); "
+            "paper.pdf itself is always read from the working tree, never this commit."
+        ),
+    )
+    extract_paper_parser.set_defaults(func=_cmd_extract_paper)
 
     init_run_parser = subparsers.add_parser(
         "init-run",
