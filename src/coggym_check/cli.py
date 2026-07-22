@@ -2,15 +2,16 @@
 
 Why stubs remain for most subcommands: each pipeline stage (snapshot, lint,
 paper extraction, materials download, etc.) is implemented in its own task
-so the entrypoint doesn't need renegotiating each time. `validate-artifact`
-and `export-schemas` are real here (task 2, schemas.py); every other
-subcommand is still a placeholder until its corresponding task lands.
+so the entrypoint doesn't need renegotiating each time. `validate-artifact`,
+`export-schemas` (task 2), and `snapshot` (task 3, dataset.py) are real
+here; every other subcommand is still a placeholder until its corresponding
+task lands.
 
-Why proper subparsers instead of the REMAINDER-stub pattern for these two:
-`validate-artifact` and `export-schemas` have real, differing argument
-signatures (a positional path; an optional --out), which argparse expresses
-more clearly as dedicated subparsers with a `func` callback than by
-threading a generic REMAINDER list through ad hoc dispatch logic.
+Why proper subparsers instead of the REMAINDER-stub pattern for these:
+they have real, differing argument signatures (a positional path; an
+optional --out; a positional study + optional --commit), which argparse
+expresses more clearly as dedicated subparsers with a `func` callback than
+by threading a generic REMAINDER list through ad hoc dispatch logic.
 """
 
 from __future__ import annotations
@@ -23,12 +24,11 @@ from typing import Sequence
 
 from pydantic import ValidationError
 
-from coggym_check import config, schemas
+from coggym_check import config, dataset, schemas
 
 #: Pipeline-stage subcommands with no implementation yet (see
 #: constraints.md's stage table). Each prints "not implemented" and exits 2.
 STUB_SUBCOMMANDS = (
-    "snapshot",
     "lint",
     "extract-paper",
     "download",
@@ -81,6 +81,47 @@ def _cmd_validate_artifact(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_dir_for(study: str, commit: str | None) -> Path:
+    """Return (creating if absent) `runs/<study>` or `runs/<study>@<shortsha>`.
+
+    Minimal placeholder for run-dir creation (constraints.md hard rule #10:
+    `runs/<study>[@<shortsha>]/`, shortsha = first 9 chars). Task 5's
+    `rundir.py` will absorb this into full stage-status lifecycle
+    management (`init-run`, `stage_status`, `record_stage`); this helper
+    deliberately does nothing beyond "make the directory exist" so it's
+    trivial to replace.
+    """
+    name = study if commit is None else f"{study}@{commit[:9]}"
+    run_dir = config.runs_dir() / name
+    run_dir.mkdir(parents=True, exist_ok=True)
+    return run_dir
+
+
+def _cmd_snapshot(args: argparse.Namespace) -> int:
+    """Parse a study into a `StudySnapshot` and write `study_snapshot.json`.
+
+    The snapshot is a pydantic model by construction (`dataset.load_study`
+    returns one), so it is already validated; round-tripping it through
+    `StudySnapshot.model_validate_json` on its own serialized output before
+    writing is a cheap extra guard against any serialization-only drift
+    (e.g. an `Any`-typed field encoding to something its own model would
+    reject) rather than trusting construction-time validation alone.
+    """
+    try:
+        snapshot = dataset.load_study(args.study, commit=args.commit)
+    except dataset.StudyNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    payload = snapshot.model_dump_json(indent=2)
+    schemas.StudySnapshot.model_validate_json(payload)
+
+    run_dir = _run_dir_for(snapshot.study, args.commit)
+    (run_dir / "study_snapshot.json").write_text(payload)
+    print(str(run_dir))
+    return 0
+
+
 def _cmd_export_schemas(args: argparse.Namespace) -> int:
     """Render every artifact model's JSON Schema + purpose into a Markdown doc."""
     out_path = Path(args.out) if args.out else config.repo_root() / "docs" / "artifacts.md"
@@ -106,6 +147,18 @@ def build_parser() -> argparse.ArgumentParser:
     for name in STUB_SUBCOMMANDS:
         sub = subparsers.add_parser(name, help=f"{name} (not yet implemented)")
         sub.add_argument("args", nargs=argparse.REMAINDER, help=argparse.SUPPRESS)
+
+    snapshot_parser = subparsers.add_parser(
+        "snapshot",
+        help="Parse a study into a validated study_snapshot.json.",
+    )
+    snapshot_parser.add_argument("study", help="Study folder name under studies/.")
+    snapshot_parser.add_argument(
+        "--commit",
+        default=None,
+        help="Pin to a datasets-repo commit (reads via `git show`, never checks out).",
+    )
+    snapshot_parser.set_defaults(func=_cmd_snapshot)
 
     validate_parser = subparsers.add_parser(
         "validate-artifact",
