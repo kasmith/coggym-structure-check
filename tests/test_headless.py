@@ -125,6 +125,29 @@ def test_build_stage_prompt_mentions_all_required_pieces(tmp_path: Path) -> None
     assert str(run_dir / "lint.json") in prompt
     assert str(run_dir / "comparison.json") in prompt
     assert "validate-artifact" in prompt
+    # No commit was passed, so the prompt must not instruct a --commit flag.
+    assert "--commit" not in prompt
+
+
+def test_build_stage_prompt_with_commit_tells_agent_to_pin_it(tmp_path: Path) -> None:
+    """Finding 1 (whole-branch review): a `run --commit <sha>` invocation
+    must tell the agent to pass `--commit <sha>` to its own `python -m
+    coggym_check` calls, or those calls resolve to the unpinned run dir
+    (`runs/<study>/`) instead of `runs/<study>@<shortsha>`."""
+    run_dir = tmp_path / "runs" / "SomeStudy@deadbeef1"
+    prompt = headless.build_stage_prompt(
+        "SomeStudy",
+        run_dir,
+        [run_dir / "study_snapshot.json"],
+        run_dir / "comparison.json",
+        commit="deadbeef123456",
+    )
+    assert "deadbeef123456" in prompt
+    assert "--commit deadbeef123456" in prompt
+    assert "validate-artifact" in prompt
+    # The commit instruction must come before the closing validate-artifact
+    # instruction, not after (order the agent reads them in).
+    assert prompt.index("--commit deadbeef123456") < prompt.index("validate-artifact")
 
 
 # ---------------------------------------------------------------------------
@@ -356,11 +379,21 @@ def test_run_study_continues_past_agentic_stage_failure(
 
     calls: list[str] = []
 
-    def fake_agentic(run_dir: Path, study: str, stage: str, agent_name: str, max_turns: int) -> None:
+    def fake_agentic(
+        run_dir: Path,
+        study: str,
+        stage: str,
+        agent_name: str,
+        max_turns: int,
+        *,
+        commit: str | None = None,
+    ) -> None:
         calls.append(stage)
         rundir.record_stage(run_dir, stage, "failed")
 
-    def fake_fix_render(run_dir: Path, study: str, max_turns: int) -> None:
+    def fake_fix_render(
+        run_dir: Path, study: str, max_turns: int, *, commit: str | None = None
+    ) -> None:
         calls.append("fix")
         rundir.record_stage(run_dir, "fix", "failed")
         rundir.record_stage(run_dir, "render", "failed")
@@ -435,6 +468,61 @@ def test_run_study_redispatches_fix_unit_when_render_incomplete(
     statuses = rundir.stage_status(result_dir)
     assert statuses["fix"] == "done"
     assert statuses["render"] == "done"
+
+
+def test_run_study_with_commit_passes_commit_into_every_agentic_stage_prompt(
+    runs_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Finding 1 (whole-branch review): a `run --commit <sha>` must reach
+    every agentic stage's prompt end to end (through `run_study` ->
+    `_dispatch_stage` -> `run_agentic_stage`/`run_fix_and_render_stage`), not
+    just `build_stage_prompt` in isolation."""
+    commit = "deadbeef123456"
+    snapshot = schemas.StudySnapshot(
+        study="S",
+        commit=commit,
+        generated_at="2026-01-01T00:00:00Z",
+        tool_version="0.1.0",
+        paper_pdf_present=False,
+        source_url_csv=None,
+        citation=schemas.Citation(),
+        experiments={},
+    )
+    lint_report = schemas.LintReport(study="S", checks_run=[], findings=[])
+    paper_status = schemas.PaperStatus(
+        study="S",
+        status="found_local",
+        pdf_path="p",
+        sha256="h",
+        retrieved_from=None,
+        candidates_tried=[],
+        n_pages=1,
+        text_quality=1.0,
+        needs_direct_pdf_read=False,
+        notes=[],
+    )
+
+    monkeypatch.setattr(
+        headless.dataset, "load_study", lambda study, commit=None: snapshot
+    )
+    monkeypatch.setattr(headless.lint, "lint_study", lambda study, commit=None: lint_report)
+    monkeypatch.setattr(headless.paper, "extract_paper", lambda study: paper_status)
+
+    captured_prompts: list[str] = []
+
+    def fake_run(cmd: list[str], capture_output: bool, text: bool) -> subprocess.CompletedProcess:
+        captured_prompts.append(cmd[2])  # ["claude", "-p", prompt, ...]
+        return subprocess.CompletedProcess(cmd, 0, stdout="{}", stderr="")
+
+    monkeypatch.setattr(headless.subprocess, "run", fake_run)
+
+    headless.run_study("S", commit=commit)
+
+    # materials, paper_summary, materials_summary, comparison, fix+render
+    # are every agentic stage this study reaches; every one of their
+    # prompts must carry the --commit instruction.
+    assert len(captured_prompts) >= 5
+    assert all(f"--commit {commit}" in prompt for prompt in captured_prompts)
 
 
 def test_run_snapshot_stage_raises_fatal_on_missing_study(

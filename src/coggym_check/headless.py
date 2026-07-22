@@ -191,6 +191,7 @@ def build_stage_prompt(
     output_path: Path,
     *,
     also_produces: Path | None = None,
+    commit: str | None = None,
 ) -> str:
     """Build one stage's task prompt from a single shared template: study,
     run dir, input artifact paths, output artifact path, and a closing
@@ -199,6 +200,12 @@ def build_stage_prompt(
     `also_produces` covers the one stage pairing that isn't 1-in/1-out:
     `fix-drafter` writes both `fix_plan.json` (`output_path`) and
     `report.md`/`pr.md` (via its own `render` call) in one invocation.
+
+    `commit`, when set (a `run --commit <sha>` pin), must be surfaced to the
+    agent explicitly: the agent's own `python -m coggym_check` calls
+    (`download`, `apply-fixes`, `render`, ...) need `--commit <sha>` too, or
+    they resolve to `runs/<study>/` instead of `runs/<study>@<shortsha>` and
+    (for `apply-fixes`) branch off HEAD instead of the pinned commit.
     """
     inputs_str = ", ".join(str(p) for p in input_paths) if input_paths else "none"
     parts = [
@@ -209,6 +216,11 @@ def build_stage_prompt(
     ]
     if also_produces is not None:
         parts.append(f"Also produce {also_produces} (and pr.md) per your output contract.")
+    if commit is not None:
+        parts.append(
+            f"Commit: {commit} — pass --commit {commit} to every python -m coggym_check "
+            "command you run."
+        )
     parts.append("Finish by running validate-artifact on every artifact you wrote.")
     return " ".join(parts)
 
@@ -290,7 +302,13 @@ def _input_artifact_paths(run_dir: Path, stage: str) -> list[Path]:
 
 
 def run_agentic_stage(
-    run_dir: Path, study: str, stage: str, agent_name: str, max_turns: int
+    run_dir: Path,
+    study: str,
+    stage: str,
+    agent_name: str,
+    max_turns: int,
+    *,
+    commit: str | None = None,
 ) -> None:
     """Run one agentic stage: build its prompt, exec `claude -p ...`, parse
     the result, and record `done`/`failed` (+ Claude cost metadata) via
@@ -300,11 +318,18 @@ def run_agentic_stage(
     validation is recorded `failed` and control returns to the caller, which
     (per the task brief) must continue on to the next runnable stage rather
     than aborting the whole study.
+
+    `commit`, when this is a `run --commit <sha>` invocation, is threaded
+    into the agent's own prompt (`build_stage_prompt`'s `commit` kwarg) so
+    the agent's own `python -m coggym_check` calls stay pinned to the same
+    commit rather than silently falling back to the unpinned run dir.
     """
     agent = load_agent(agent_name)
     stage_def = rundir.STAGE_REGISTRY[stage]
     output_path = run_dir / stage_def.artifact
-    prompt = build_stage_prompt(study, run_dir, _input_artifact_paths(run_dir, stage), output_path)
+    prompt = build_stage_prompt(
+        study, run_dir, _input_artifact_paths(run_dir, stage), output_path, commit=commit
+    )
     cmd = build_claude_command(agent, prompt, max_turns)
 
     try:
@@ -330,12 +355,18 @@ def run_agentic_stage(
     rundir.record_stage(run_dir, stage, status, claude=claude_meta)
 
 
-def run_fix_and_render_stage(run_dir: Path, study: str, max_turns: int) -> None:
+def run_fix_and_render_stage(
+    run_dir: Path, study: str, max_turns: int, *, commit: str | None = None
+) -> None:
     """Run the `fix` + `render` stages as the single `fix-drafter` unit the
     skill treats them as: one `claude -p` invocation is expected to write
     both `fix_plan.json` and `report.md` (running `apply-fixes`/`render`
     itself via its own `Bash` tool), so both registry stages are recorded
     from this one invocation's outcome.
+
+    `commit` (a `run --commit <sha>` pin) is threaded into the prompt so the
+    agent's own `apply-fixes`/`render` calls stay pinned to the same commit
+    (`apply-fixes` in particular must branch off that commit, not HEAD).
     """
     agent = load_agent("fix-drafter")
     fix_output = run_dir / rundir.STAGE_REGISTRY["fix"].artifact
@@ -346,6 +377,7 @@ def run_fix_and_render_stage(run_dir: Path, study: str, max_turns: int) -> None:
         _input_artifact_paths(run_dir, "fix"),
         fix_output,
         also_produces=render_output,
+        commit=commit,
     )
     cmd = build_claude_command(agent, prompt, max_turns)
 
@@ -424,10 +456,12 @@ def run_paper_stage(run_dir: Path, study: str, commit: str | None, max_turns: in
         rundir.record_stage(run_dir, "paper", "done")
         return
 
-    run_agentic_stage(run_dir, study, "paper", "paper-finder", max_turns)
+    run_agentic_stage(run_dir, study, "paper", "paper-finder", max_turns, commit=commit)
 
 
-def run_paper_summary_stage(run_dir: Path, study: str, max_turns: int) -> None:
+def run_paper_summary_stage(
+    run_dir: Path, study: str, max_turns: int, *, commit: str | None = None
+) -> None:
     """`paper_summary` stage, skippable per the skill's rule: skip iff
     `paper_status.json`'s `status` is `not_found` or `paywalled` (no paper
     text exists for `paper-analyst` to read)."""
@@ -446,10 +480,12 @@ def run_paper_summary_stage(run_dir: Path, study: str, max_turns: int) -> None:
             )
             return
 
-    run_agentic_stage(run_dir, study, "paper_summary", "paper-analyst", max_turns)
+    run_agentic_stage(run_dir, study, "paper_summary", "paper-analyst", max_turns, commit=commit)
 
 
-def run_materials_summary_stage(run_dir: Path, study: str, max_turns: int) -> None:
+def run_materials_summary_stage(
+    run_dir: Path, study: str, max_turns: int, *, commit: str | None = None
+) -> None:
     """`materials_summary` stage, skippable per the skill's rule: skip iff
     `materials_manifest.json`'s `status` is `none_found` (nothing downloaded
     for `materials-analyst` to mine)."""
@@ -468,7 +504,9 @@ def run_materials_summary_stage(run_dir: Path, study: str, max_turns: int) -> No
             )
             return
 
-    run_agentic_stage(run_dir, study, "materials_summary", "materials-analyst", max_turns)
+    run_agentic_stage(
+        run_dir, study, "materials_summary", "materials-analyst", max_turns, commit=commit
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -493,17 +531,19 @@ def _dispatch_stage(
     elif stage == "paper":
         run_paper_stage(run_dir, study, commit, max_turns)
     elif stage == "materials":
-        run_agentic_stage(run_dir, study, "materials", "materials-scout", max_turns)
+        run_agentic_stage(run_dir, study, "materials", "materials-scout", max_turns, commit=commit)
     elif stage == "paper_summary":
-        run_paper_summary_stage(run_dir, study, max_turns)
+        run_paper_summary_stage(run_dir, study, max_turns, commit=commit)
     elif stage == "materials_summary":
-        run_materials_summary_stage(run_dir, study, max_turns)
+        run_materials_summary_stage(run_dir, study, max_turns, commit=commit)
     elif stage == "comparison":
         # Never skipped, even when both paper_summary/materials_summary
         # were — a degraded comparison is still meaningful (skill step 3g).
-        run_agentic_stage(run_dir, study, "comparison", "structure-comparator", max_turns)
+        run_agentic_stage(
+            run_dir, study, "comparison", "structure-comparator", max_turns, commit=commit
+        )
     elif stage == "fix":
-        run_fix_and_render_stage(run_dir, study, max_turns)
+        run_fix_and_render_stage(run_dir, study, max_turns, commit=commit)
     else:  # pragma: no cover - STAGE_DISPATCH_ORDER is derived from the
         # registry itself, so every real stage name is handled above.
         raise ValueError(f"no dispatch handler for stage '{stage}'")
