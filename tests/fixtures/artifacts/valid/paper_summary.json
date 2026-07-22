@@ -1,0 +1,29 @@
+{
+  "study": "TestStudy2020Mini",
+  "paper_sha256": "abc123",
+  "experiments": [
+    {
+      "paper_label": "Experiment 1",
+      "coggym_folder": "exp1",
+      "mapping_confidence": "high",
+      "mapping_rationale": "trial counts and condition names match exactly",
+      "n_participants": {"value": 20, "quote": "20 participants took part", "ref": "p.4", "confidence": "high", "source": "paper"},
+      "n_conditions": {"value": 1, "quote": null, "ref": null, "confidence": "low", "source": "inferred"},
+      "condition_names": {"value": ["cond1"], "quote": null, "ref": null, "confidence": "medium", "source": "paper"},
+      "design": {"value": "within-subjects", "quote": "a within-subjects design", "ref": "p.4", "confidence": "high", "source": "paper"},
+      "n_trials_total": {"value": 3, "quote": null, "ref": null, "confidence": "medium", "source": "paper"},
+      "n_trials_per_participant": {"value": 3, "quote": null, "ref": null, "confidence": "medium", "source": "paper"},
+      "randomization": {"value": true, "quote": null, "ref": null, "confidence": "low", "source": "inferred"},
+      "counterbalancing": {"value": null, "quote": null, "ref": null, "confidence": "low", "source": "inferred"},
+      "instructions_expectations": {"value": "participants read a cover story before beginning", "quote": null, "ref": null, "confidence": "low", "source": "inferred"},
+      "response_scale": {"value": "multi-choice", "quote": null, "ref": null, "confidence": "medium", "source": "paper"},
+      "stimuli_modality": {"value": "text", "quote": null, "ref": null, "confidence": "medium", "source": "paper"},
+      "stimulus_description": {"value": "short text vignettes", "quote": null, "ref": null, "confidence": "medium", "source": "paper"},
+      "exclusions": {"value": null, "quote": null, "ref": null, "confidence": "low", "source": "inferred"},
+      "notes": []
+    }
+  ],
+  "unmapped_paper_experiments": [],
+  "unmapped_coggym_experiments": [],
+  "extraction_issues": []
+}

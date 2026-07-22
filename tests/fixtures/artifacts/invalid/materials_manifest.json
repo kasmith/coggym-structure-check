@@ -1,0 +1,18 @@
+{
+  "study": "TestStudy2020Mini",
+  "status": "found",
+  "searches": [
+    {"engine": "google", "query": "TestStudy2020Mini materials OSF", "useful": true}
+  ],
+  "sources": [
+    {
+      "url": "https://osf.io/abc12/",
+      "relation": "official_materials",
+      "evidence": "linked from paper acknowledgments",
+      "local_path": null,
+      "download_status": "pending",
+      "sha256_or_commit": null
+    }
+  ],
+  "notes": []
+}

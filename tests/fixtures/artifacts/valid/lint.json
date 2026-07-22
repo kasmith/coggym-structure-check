@@ -1,0 +1,13 @@
+{
+  "study": "TestStudy2020Mini",
+  "checks_run": ["files-present", "json-parse"],
+  "findings": [
+    {
+      "check_id": "files-present",
+      "level": "info",
+      "experiment": null,
+      "message": "all six canonical files present",
+      "location": null
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "study": "TestStudy2020Mini",
+  "commit": null,
+  "created_at": "2026-07-22T00:00:00Z",
+  "tool_version": "0.1.0",
+  "stages": {
+    "snapshot": {
+      "status": "in_progress",
+      "artifact": "study_snapshot.json",
+      "input_hashes": {},
+      "skipped_reason": null,
+      "claude": null
+    }
+  }
+}

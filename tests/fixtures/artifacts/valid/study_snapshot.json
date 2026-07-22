@@ -1,0 +1,53 @@
+{
+  "study": "TestStudy2020Mini",
+  "commit": null,
+  "generated_at": "2026-07-22T00:00:00Z",
+  "tool_version": "0.1.0",
+  "paper_pdf_present": true,
+  "source_url_csv": "https://example.org/paper",
+  "citation": {
+    "paper_title": "A Test Study",
+    "citation": "Author (2020). A Test Study.",
+    "paperDOI": "10.1000/test",
+    "authors": ["Author, A."],
+    "year": 2020
+  },
+  "experiments": {
+    "exp1": {
+      "experiment_name": "exp1",
+      "description": "A test experiment",
+      "task_type": ["prediction"],
+      "response_type": ["multi-choice"],
+      "stimuli_count": 3,
+      "n_trials_in_jsonl": 3,
+      "n_instructions": 2,
+      "conditions": [
+        {
+          "name": "cond1",
+          "n_blocks": 2,
+          "block_sizes": [2, 1],
+          "block_randomization": [true, false],
+          "block_kinds": ["instruction", "trial"]
+        }
+      ],
+      "queries_by_tag": {
+        "q1": {
+          "type": "multi-choice",
+          "options": ["a", "b"],
+          "slider": null,
+          "n_trials_using": 3
+        }
+      },
+      "instruction_texts": {
+        "instr1": "Welcome to the study."
+      },
+      "stimuli_modalities": ["text"],
+      "assets_present": false,
+      "extra_files": [],
+      "human_data": {
+        "participants_count": 20,
+        "judgment_count": 60
+      }
+    }
+  }
+}

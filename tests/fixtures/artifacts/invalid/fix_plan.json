@@ -1,0 +1,17 @@
+{
+  "study": "TestStudy2020Mini",
+  "fixes": [
+    {
+      "fix": {
+        "op": "set_instruction_text",
+        "experiment": "exp1",
+        "record_id": "instr1",
+        "new_value": "Welcome to the study."
+      },
+      "discrepancy_id": "d1",
+      "commit_message": "fix(TestStudy2020Mini/exp1): correct instruction text to match materials"
+    }
+  ],
+  "dropped": [],
+  "pr_body": "This PR fixes 1 clear-cut discrepancy.\n\n## Needs human judgment\n\n(none)"
+}

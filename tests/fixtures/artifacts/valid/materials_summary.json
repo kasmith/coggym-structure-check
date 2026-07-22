@@ -1,0 +1,34 @@
+{
+  "study": "TestStudy2020Mini",
+  "status": "complete",
+  "experiments": [
+    {
+      "coggym_folder": "exp1",
+      "matched": true,
+      "matched_material_paths": ["materials/TestStudy2020Mini/osf/instructions.txt"],
+      "verbatim_instructions": [
+        {
+          "order_hint": 1,
+          "text": "Welcome to the study.",
+          "source_file": "materials/TestStudy2020Mini/osf/instructions.txt",
+          "selector_or_lines": "1-2"
+        }
+      ],
+      "randomization_evidence": [
+        {
+          "claim": "blocks are shuffled per participant",
+          "source_file": "materials/TestStudy2020Mini/osf/exp.js",
+          "lines": "10-12",
+          "quote": "shuffle(blocks);"
+        }
+      ],
+      "response_scale_evidence": [
+        {"value": "multi-choice", "quote": "choose one of two options", "ref": "materials/.../exp.js:20", "confidence": "high", "source": "materials"}
+      ],
+      "stimulus_list": {"n": 3, "source_file": "materials/TestStudy2020Mini/osf/stimuli.json"},
+      "condition_assignment": {"value": "random", "quote": null, "ref": null, "confidence": "low", "source": "inferred"},
+      "notes": []
+    }
+  ],
+  "unmatched_materials": []
+}

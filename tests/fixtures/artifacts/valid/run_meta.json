@@ -1,0 +1,22 @@
+{
+  "study": "TestStudy2020Mini",
+  "commit": null,
+  "created_at": "2026-07-22T00:00:00Z",
+  "tool_version": "0.1.0",
+  "stages": {
+    "snapshot": {
+      "status": "done",
+      "artifact": "study_snapshot.json",
+      "input_hashes": {},
+      "skipped_reason": null,
+      "claude": null
+    },
+    "comparison": {
+      "status": "done",
+      "artifact": "comparison.json",
+      "input_hashes": {"study_snapshot.json": "sha1"},
+      "skipped_reason": null,
+      "claude": {"cost_usd": 0.12, "duration_s": 30.5, "session_id": "abc-123"}
+    }
+  }
+}

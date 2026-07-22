@@ -1,0 +1,38 @@
+{
+  "study": "TestStudy2020Mini",
+  "commit": null,
+  "inputs": {"study_snapshot.json": "sha1", "lint.json": "sha2"},
+  "coverage": {"paper": "full", "materials": "partial"},
+  "experiments": [
+    {
+      "folder": "exp1",
+      "discrepancies": [
+        {
+          "id": "d1",
+          "category": "instruction_text",
+          "field": "instruction_texts.instr1",
+          "location": {"file": "instruction.jsonl", "record_id": "instr1", "json_path": null},
+          "paper_value": "Welcome to the experiment.",
+          "materials_value": "Welcome to the study.",
+          "coggym_value": "Welcome to the experiment.",
+          "severity": "minor",
+          "clear_cut": true,
+          "evidence": [{"source": "materials", "quote": "Welcome to the study.", "ref": "materials/.../instructions.txt:1"}],
+          "recommendation": "fix",
+          "rationale": "coggym text should match verbatim materials text, not the paper's paraphrase",
+          "proposed_fix": {
+            "op": "set_instruction_text",
+            "experiment": "exp1",
+            "record_id": "instr1",
+            "new_value": "Welcome to the study."
+          }
+        }
+      ],
+      "confirmations": [
+        {"field": "n_conditions", "value": 1, "evidence_ref": "paper p.4"}
+      ]
+    }
+  ],
+  "needs_human_judgment_count": 0,
+  "clear_cut_count": 1
+}

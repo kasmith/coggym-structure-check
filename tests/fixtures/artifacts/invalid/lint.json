@@ -1,0 +1,13 @@
+{
+  "study": "TestStudy2020Mini",
+  "checks_run": ["files-present", "json-parse"],
+  "findings": [
+    {
+      "check_id": "files-present",
+      "level": "critical",
+      "experiment": null,
+      "message": "wrong literal: level must be error|warning|info",
+      "location": null
+    }
+  ]
+}

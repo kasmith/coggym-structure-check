@@ -1,0 +1,12 @@
+{
+  "study": "TestStudy2020Mini",
+  "status": "found_local",
+  "pdf_path": "materials/TestStudy2020Mini/paper.pdf",
+  "sha256": "abc123",
+  "retrieved_from": null,
+  "candidates_tried": [],
+  "n_pages": 10,
+  "text_quality": 0.9,
+  "needs_direct_pdf_read": false,
+  "notes": []
+}
