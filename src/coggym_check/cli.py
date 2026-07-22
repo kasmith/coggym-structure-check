@@ -24,12 +24,11 @@ from typing import Sequence
 
 from pydantic import ValidationError
 
-from coggym_check import config, dataset, schemas
+from coggym_check import config, dataset, lint, schemas
 
 #: Pipeline-stage subcommands with no implementation yet (see
 #: constraints.md's stage table). Each prints "not implemented" and exits 2.
 STUB_SUBCOMMANDS = (
-    "lint",
     "extract-paper",
     "download",
     "init-run",
@@ -122,6 +121,59 @@ def _cmd_snapshot(args: argparse.Namespace) -> int:
     return 0
 
 
+#: Findings sort earlier the more severe they are, so the printed table
+#: surfaces errors first regardless of check/experiment iteration order.
+_LEVEL_ORDER = {"error": 0, "warning": 1, "info": 2}
+
+
+def _print_findings_table(report: schemas.LintReport) -> None:
+    """Print `report.findings` as a plain aligned table, errors first."""
+    if not report.findings:
+        print("no findings")
+        return
+    header = ("LEVEL", "CHECK", "EXPERIMENT", "MESSAGE")
+    rows = [
+        (f.level, f.check_id, f.experiment or "-", f.message)
+        for f in sorted(report.findings, key=lambda f: (_LEVEL_ORDER[f.level], f.check_id))
+    ]
+    widths = [
+        max(len(row[i]) for row in [header, *rows]) for i in range(len(header))
+    ]
+
+    def _fmt(row: tuple[str, str, str, str]) -> str:
+        return "  ".join(cell.ljust(width) for cell, width in zip(row, widths))
+
+    print(_fmt(header))
+    for row in rows:
+        print(_fmt(row))
+
+
+def _cmd_lint(args: argparse.Namespace) -> int:
+    """Run structural lint over a study and write a validated `lint.json`.
+
+    Exit codes: 1 if any `error`-level finding was produced, else 0 --
+    mirrors `_cmd_snapshot`'s round-trip-validate-then-write pattern, and
+    additionally prints a findings table (errors first) so a human running
+    this directly sees the result without opening the JSON.
+    """
+    try:
+        report = lint.lint_study(args.study, commit=args.commit)
+    except dataset.StudyNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    payload = report.model_dump_json(indent=2)
+    schemas.LintReport.model_validate_json(payload)
+
+    run_dir = _run_dir_for(report.study, args.commit)
+    (run_dir / "lint.json").write_text(payload)
+
+    _print_findings_table(report)
+    print(str(run_dir))
+
+    return 1 if any(f.level == "error" for f in report.findings) else 0
+
+
 def _cmd_export_schemas(args: argparse.Namespace) -> int:
     """Render every artifact model's JSON Schema + purpose into a Markdown doc."""
     out_path = Path(args.out) if args.out else config.repo_root() / "docs" / "artifacts.md"
@@ -159,6 +211,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Pin to a datasets-repo commit (reads via `git show`, never checks out).",
     )
     snapshot_parser.set_defaults(func=_cmd_snapshot)
+
+    lint_parser = subparsers.add_parser(
+        "lint",
+        help="Run structural lint over a study and write a validated lint.json.",
+    )
+    lint_parser.add_argument("study", help="Study folder name under studies/.")
+    lint_parser.add_argument(
+        "--commit",
+        default=None,
+        help="Pin to a datasets-repo commit (reads via `git show`, never checks out).",
+    )
+    lint_parser.set_defaults(func=_cmd_lint)
 
     validate_parser = subparsers.add_parser(
         "validate-artifact",

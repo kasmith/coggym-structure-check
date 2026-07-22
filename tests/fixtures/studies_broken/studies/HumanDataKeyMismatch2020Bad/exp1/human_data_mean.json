@@ -1,0 +1,14 @@
+{
+  "participants_info": {
+    "count": 1,
+    "gender": {},
+    "age": -1
+  },
+  "judgment_count": 1,
+  "trial_1": {
+    "rating": 5.0
+  },
+  "trial_ghost": {
+    "rating": 3.0
+  }
+}

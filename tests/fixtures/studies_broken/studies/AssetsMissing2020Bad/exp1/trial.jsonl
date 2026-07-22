@@ -1,0 +1,1 @@
+{"id": "trial_1", "stimuli": [{"input_type": "image", "media_url": ["assets/img1.png"]}], "queries": [{"prompt": "Rate it", "type": "single-slider", "tag": "rating", "slider_config": {"min": 0, "max": 10, "labels": [{"value": 0, "label": "low"}, {"value": 10, "label": "high"}]}, "required": true}]}

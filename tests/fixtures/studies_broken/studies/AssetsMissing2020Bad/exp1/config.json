@@ -1,0 +1,35 @@
+{
+  "experimentName": "AssetsMissing2020Bad Exp 1",
+  "paper-title": "A Test Study",
+  "citation": "Author, A. (2020). A Test Study.",
+  "year": 2020,
+  "description": "A minimal broken-variant fixture.",
+  "paperDOI": "10.1000/test",
+  "taskType": [
+    "Test"
+  ],
+  "responseType": [
+    "single-slider"
+  ],
+  "authors": [
+    "Author, A."
+  ],
+  "stimuli_count": 1,
+  "experimentFlow": [
+    {
+      "experimental_condition": "cond1",
+      "blocks": [
+        [
+          "instruction_intro"
+        ],
+        [
+          "trial_1"
+        ]
+      ],
+      "block_randomization": [
+        false,
+        false
+      ]
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+{"id": "trial_1", "stimuli": [{"input_type": "text", "text": "<p>Stimulus</p>"}], "queries": [{"prompt": "Rate it", "type": "single-slider", "tag": "rating", "slider_config": {"min": 10, "max": 0, "labels": [{"value": 0, "label": "low"}, {"value": 10, "label": "high"}]}, "required": true}]}
