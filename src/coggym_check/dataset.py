@@ -9,9 +9,6 @@ is on a detached HEAD and its working tree/index/HEAD must never be
 touched). `FsReader` and `GitReader` implement the same small `StudyReader`
 protocol so `load_study` (and Task 4's `lint.py`, which reuses this module)
 never has to branch on which mode it's in.
-
-Deliberately NOT read anywhere in this module: `trial_selection_map_100.json`
-(constraints.md hard rule #4 — it is AI-testing scaffolding, out of scope).
 """
 
 from __future__ import annotations
