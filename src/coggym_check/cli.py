@@ -14,6 +14,10 @@ they have real, differing argument signatures (a positional path; an
 optional --out; a positional study + optional --commit), which argparse
 expresses more clearly as dedicated subparsers with a `func` callback than
 by threading a generic REMAINDER list through ad hoc dispatch logic.
+
+`run` (task 11, headless.py) is the last of these: the full-pipeline
+headless batch orchestrator, taking either a single study or a
+`--studies-from` file of study names, run sequentially.
 """
 
 from __future__ import annotations
@@ -27,11 +31,24 @@ from typing import Sequence
 
 from pydantic import BaseModel, ValidationError
 
-from coggym_check import config, dataset, fixer, lint, materials, paper, report, rundir, schemas
+from coggym_check import (
+    config,
+    dataset,
+    fixer,
+    headless,
+    lint,
+    materials,
+    paper,
+    report,
+    rundir,
+    schemas,
+)
 
 #: Pipeline-stage subcommands with no implementation yet (see
 #: constraints.md's stage table). Each prints "not implemented" and exits 2.
-STUB_SUBCOMMANDS = ("run",)
+#: Empty now that task 11 (`run`, headless.py) is implemented — kept as the
+#: harness for whatever the next new subcommand turns out to be.
+STUB_SUBCOMMANDS: tuple[str, ...] = ()
 
 
 def _cmd_validate_artifact(args: argparse.Namespace) -> int:
@@ -299,6 +316,48 @@ def _cmd_apply_fixes(args: argparse.Namespace) -> int:
     return fixer.apply_fixes(run_dir, dry_run=args.dry_run, force_branch=args.force_branch)
 
 
+def _cmd_run(args: argparse.Namespace) -> int:
+    """Headless full-pipeline batch runner (task 11, `headless.py`).
+
+    Studies come from either the positional `study` argument or
+    `--studies-from FILE` (one study name per line; blank lines and `#`
+    comments ignored) — exactly one of the two is expected, `--studies-from`
+    taking precedence if both are somehow given, since it's the more
+    specific ask. Neither given is a usage error (exit 2): there is nothing
+    to run.
+
+    Exit codes: 0 if every study completed without a fatal error, 1 if any
+    study's `StudyResult.error` is set (a `StudyFatalError`, e.g. the study
+    doesn't exist in the datasets repo) — mirroring `_cmd_lint`'s "1 means
+    something needs attention" convention. A study reaching this non-fatal
+    outcome still had its run dir printed; only the fatal ones are silent
+    apart from the stderr message `headless.run` already printed for them.
+    """
+    if args.studies_from:
+        studies = [
+            line.strip()
+            for line in Path(args.studies_from).read_text().splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        ]
+    elif args.study:
+        studies = [args.study]
+    else:
+        print("run: either <study> or --studies-from FILE is required", file=sys.stderr)
+        return 2
+
+    results = headless.run(
+        studies, commit=args.commit, force=args.force, max_turns=args.max_turns
+    )
+
+    exit_code = 0
+    for result in results:
+        if result.error is not None:
+            exit_code = 1
+        else:
+            print(str(result.run_dir))
+    return exit_code
+
+
 def _print_stage_status_table(statuses: dict[str, str]) -> None:
     """Print `stage_status`'s result as a plain aligned table, in pipeline order."""
     header = ("STAGE", "STATUS", "ARTIFACT")
@@ -446,6 +505,39 @@ def build_parser() -> argparse.ArgumentParser:
     )
     apply_fixes_parser.set_defaults(func=_cmd_apply_fixes)
 
+    run_parser = subparsers.add_parser(
+        "run",
+        help="Headless: run the full pipeline for one study (or --studies-from a file).",
+    )
+    run_parser.add_argument(
+        "study",
+        nargs="?",
+        default=None,
+        help="Study folder name under studies/. Omit when using --studies-from.",
+    )
+    run_parser.add_argument(
+        "--commit",
+        default=None,
+        help="Pin to a datasets-repo commit (run dir becomes runs/<study>@<shortsha>).",
+    )
+    run_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-run every stage even if init-run reports it done.",
+    )
+    run_parser.add_argument(
+        "--studies-from",
+        default=None,
+        help="Path to a file of study names (one per line; blank/# lines ignored), run sequentially.",
+    )
+    run_parser.add_argument(
+        "--max-turns",
+        type=int,
+        default=60,
+        help="--max-turns passed to every agentic stage's `claude -p` invocation (default: 60).",
+    )
+    run_parser.set_defaults(func=_cmd_run)
+
     init_run_parser = subparsers.add_parser(
         "init-run",
         help="Create (or reuse) a run dir + run_meta.json and print its stage status table.",
@@ -484,9 +576,10 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     """Parse arguments and dispatch to the requested subcommand.
 
-    Subcommands with a `func` default (validate-artifact, export-schemas)
-    run for real; everything else is still a stub that reports itself as
-    not implemented and exits 2, since those stage modules don't exist yet.
+    Every subcommand now has a real `func` (task 11's `run` was the last
+    placeholder — see `STUB_SUBCOMMANDS`'s docstring). The stub-dispatch
+    branch below is kept rather than deleted: it's the harness the next new
+    subcommand's task would reuse, exactly as `run` did until this task.
     """
     parser = build_parser()
     parsed = parser.parse_args(argv)
