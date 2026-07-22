@@ -1,0 +1,4 @@
+pydantic==2.13.4
+pymupdf==1.28.0
+requests==2.34.2
+pytest==9.1.1

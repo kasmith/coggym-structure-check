@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "coggym-structure-check"
+version = "0.1.0"
+description = "Agentic system that validates CogGym experiment implementations against their source papers and materials."
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic",
+    "pymupdf",
+    "requests",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
