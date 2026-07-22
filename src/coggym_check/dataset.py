@@ -174,8 +174,17 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _reader_for(commit: str | None) -> StudyReader:
-    repo = config.datasets_repo()
+def _reader_for(commit: str | None, repo_root: Path | None = None) -> StudyReader:
+    """Build the reader for `commit` (fs mode if `None`, else `GitReader`).
+
+    `repo_root` (task-8 addition): override the datasets-repo root instead of
+    `config.datasets_repo()`. Needed so `fixer.py` can re-run `lint_study`
+    (via this function) against a `git worktree` checkout after applying
+    fixes, without ever touching the real datasets repo's working tree —
+    that worktree lives at an arbitrary `runs/<study>/.worktree` path, not
+    at `config.datasets_repo()`.
+    """
+    repo = repo_root if repo_root is not None else config.datasets_repo()
     if commit is not None:
         return GitReader(repo, commit)
     return FsReader(repo)

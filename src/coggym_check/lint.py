@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 
 from coggym_check import config, dataset
 from coggym_check.dataset import CANONICAL_EXPERIMENT_FILES, StudyReader
@@ -66,20 +67,29 @@ _DOI_BARE_RE = re.compile(r"^10\.\d{4,9}/\S+$")
 _DOI_URL_RE = re.compile(r"^https?://(dx\.)?doi\.org/10\.\d{4,9}/\S+$")
 
 
-def lint_study(study: str, commit: str | None = None) -> LintReport:
+def lint_study(
+    study: str, commit: str | None = None, repo_root: Path | None = None
+) -> LintReport:
     """Run every structural check over `studies/<study>/` and return a `LintReport`.
 
     Mirrors `dataset.load_study`'s study-not-found behavior (raises
     `dataset.StudyNotFoundError`) and its reader selection (filesystem vs. a
     pinned commit via `--commit`), but never lets one experiment's malformed
     file abort the rest of the study -- see the module docstring.
+
+    `repo_root` (task-8 addition, threaded through to `dataset._reader_for`):
+    lint a datasets-repo root other than `config.datasets_repo()`. This is
+    the one hook `fixer.py` needs to re-lint a `git worktree` checkout after
+    applying fixes there, without ever pointing lint at (or touching) the
+    real datasets repo's own working tree.
     """
-    reader = dataset._reader_for(commit)
+    reader = dataset._reader_for(commit, repo_root=repo_root)
     study_dir = f"studies/{study}"
     if not reader.exists(study_dir):
+        effective_root = repo_root if repo_root is not None else config.datasets_repo()
         raise dataset.StudyNotFoundError(
             f"study '{study}' not found under '{study_dir}' "
-            f"(commit={commit!r}, datasets_repo={config.datasets_repo()})"
+            f"(commit={commit!r}, datasets_repo={effective_root})"
         )
 
     entries = reader.list_entries(study_dir)
