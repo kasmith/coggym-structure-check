@@ -1,0 +1,17 @@
+{
+  "participants_info": {
+    "count": 5,
+    "gender": {},
+    "age": -1
+  },
+  "judgment_count": 15,
+  "clip_001": {
+    "causal_rating": [40, 45, 41]
+  },
+  "clip_002": {
+    "causal_rating": [70, 65, 69]
+  },
+  "clip_003": {
+    "causal_rating": [50, 60, 55]
+  }
+}

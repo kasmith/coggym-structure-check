@@ -1,0 +1,2 @@
+{"id": "instruction_intro", "type": "instruction", "text": "Welcome to the study. You will watch three short clips."}
+{"id": "instruction_task", "type": "instruction", "text": "After each clip, rate how much the agent caused the outcome."}

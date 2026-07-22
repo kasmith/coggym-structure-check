@@ -1,0 +1,39 @@
+{
+  "experimentName": "TestStudy2020Mini Exp 1",
+  "paper-title": "A Test Study",
+  "citation": "Author, A. (2020). A Test Study. Journal of Testing.",
+  "year": 2020,
+  "alias": "teststudy2020mini-exp-1",
+  "description": "You will watch three grid-world scenarios and rate preferences and beliefs.",
+  "paperDOI": "10.1000/test",
+  "taskType": [
+    "Theory of Mind"
+  ],
+  "responseType": [
+    "multi-slider"
+  ],
+  "authors": [
+    "Author, A."
+  ],
+  "stimuli_count": 3,
+  "experimentFlow": [
+    {
+      "experimental_condition": "cond1",
+      "blocks": [
+        [
+          "instruction_intro",
+          "instruction_task"
+        ],
+        [
+          "scenario_001",
+          "scenario_002",
+          "scenario_003"
+        ]
+      ],
+      "block_randomization": [
+        false,
+        false
+      ]
+    }
+  ]
+}

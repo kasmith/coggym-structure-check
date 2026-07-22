@@ -1,0 +1,35 @@
+{
+  "experimentName": "TestStudy2020Mini Exp 2",
+  "paper-title": "A Test Study",
+  "citation": "Author, A. (2020). A Test Study. Journal of Testing.",
+  "year": 2020,
+  "alias": "teststudy2020mini-exp-2",
+  "description": "You will watch three clips and rate how much the outcome was caused by the agent.",
+  "paperDOI": "10.1000/test",
+  "taskType": [
+    "Causal Judgment"
+  ],
+  "responseType": [
+    "single-slider"
+  ],
+  "authors": [
+    "Author, A."
+  ],
+  "stimuli_count": 3,
+  "experimentFlow": [
+    {
+      "experimental_condition": "cond1",
+      "blocks": [
+        [
+          "instruction_intro",
+          "instruction_task"
+        ],
+        [
+          "clip_001",
+          "clip_002",
+          "clip_003"
+        ]
+      ]
+    }
+  ]
+}

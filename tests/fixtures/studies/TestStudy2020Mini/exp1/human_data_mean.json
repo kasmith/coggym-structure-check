@@ -1,0 +1,38 @@
+{
+  "participants_info": {
+    "count": 5,
+    "gender": {},
+    "age": -1
+  },
+  "judgment_count": 15,
+  "scenario_001": {
+    "truck_preference": {
+      "Korean": 4.0,
+      "Mexican": 5.0
+    },
+    "belief_at_hidden": {
+      "Mexican": 3.0,
+      "No truck": 2.0
+    }
+  },
+  "scenario_002": {
+    "truck_preference": {
+      "Korean": 3.0,
+      "Mexican": 6.0
+    },
+    "belief_at_hidden": {
+      "Mexican": 4.0,
+      "No truck": 3.0
+    }
+  },
+  "scenario_003": {
+    "truck_preference": {
+      "Korean": 5.0,
+      "Mexican": 2.0
+    },
+    "belief_at_hidden": {
+      "Mexican": 2.0,
+      "No truck": 5.0
+    }
+  }
+}
