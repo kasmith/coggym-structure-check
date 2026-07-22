@@ -56,7 +56,7 @@ _CITATION_FIELDS = ("paper-title", "citation", "authors", "year")
 #: `human_data_mean.json`/`human_data_ind.json` header keys that are not
 #: trial ids and must be ignored by `human-data-ids` (constraints.md's
 #: dataset schema cheat-sheet).
-_HUMAN_DATA_HEADER_KEYS = {"participants_info", "judgment_count"}
+_HUMAN_DATA_HEADER_KEYS = {"participants_info", "judgment_count", "notes"}
 
 #: A bare DOI like `10.1000/test` (constraints.md: paperDOI may be a bare DOI
 #: string, per Baker2017Rational/exp1's `10.1000/test`-shaped anchor value).

@@ -149,16 +149,23 @@ class TestJsonParse:
     def test_malformed_experiment_skips_config_dependent_checks_but_not_others(
         self, broken_repo: None
     ) -> None:
-        """A study-breaking config.json must not abort the whole study: other
-        experiments (none here) would still be linted, and checks that don't
-        need config.json (files-present, slider-sane, assets-exist,
-        human-data-ids) still run for this experiment."""
+        """A per-experiment config.json parse failure must emit a json-parse
+        error for that experiment alone, while other experiments (exp2 here)
+        are still fully linted. checks_run is unaffected."""
         report = lint.lint_study("MalformedJson2020Bad")
-        assert _findings(report, "files-present") == []
-        assert _findings(report, "flow-ids-resolve") == []
-        assert _findings(report, "randomization-length") == []
-        assert _findings(report, "citation-present") == []
-        assert _findings(report, "response-type") == []
+
+        # exp1 has malformed config.json: exactly one json-parse error
+        exp1_findings = [f for f in report.findings if f.experiment == "exp1"]
+        exp1_json_parse = [f for f in exp1_findings if f.check_id == "json-parse"]
+        assert len(exp1_json_parse) == 1
+        assert "config.json" in exp1_json_parse[0].message
+
+        # exp2 is clean: zero findings
+        exp2_findings = [f for f in report.findings if f.experiment == "exp2"]
+        assert len(exp2_findings) == 0
+
+        # checks_run is unaffected (all checks attempted on both experiments)
+        assert report.checks_run == lint.ALL_CHECK_IDS
 
 
 # ---------------------------------------------------------------------------
@@ -349,6 +356,45 @@ class TestHumanDataIds:
 
     def test_orphan_key_warns(self, broken_repo: None) -> None:
         report = lint.lint_study("HumanDataKeyMismatch2020Bad")
+        findings = _findings(report, "human-data-ids")
+        assert len(findings) == 1
+        assert findings[0].level == "warning"
+        assert "trial_ghost" in findings[0].message
+
+    def test_benign_notes_header_is_ignored(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Real human_data_mean.json files carry a top-level 'notes' key; it
+        must not trigger a human-data-ids finding."""
+        repo_root = _copy_mini(tmp_path)
+        # Add "notes" header to human_data_mean.json in both exp1 and exp2
+        for exp in ["exp1", "exp2"]:
+            _mutate_json(
+                repo_root / "studies/TestStudy2020Mini" / exp / "human_data_mean.json",
+                lambda d: d.update({"notes": "some metadata"}),
+            )
+        monkeypatch.setattr(config, "datasets_repo", lambda: repo_root)
+
+        report = lint.lint_study("TestStudy2020Mini")
+
+        # No human-data-ids findings when "notes" is present
+        assert _findings(report, "human-data-ids") == []
+
+    def test_genuinely_unknown_key_still_warns(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Even after adding "notes" to the benign header keys, an actually
+        unknown trial id must still trigger a human-data-ids finding."""
+        repo_root = _copy_mini(tmp_path)
+        # Add both a benign "notes" key and a genuinely unknown "trial_ghost" key
+        _mutate_json(
+            repo_root / "studies/TestStudy2020Mini/exp1/human_data_mean.json",
+            lambda d: d.update({"notes": "metadata", "trial_ghost": {}}),
+        )
+        monkeypatch.setattr(config, "datasets_repo", lambda: repo_root)
+
+        report = lint.lint_study("TestStudy2020Mini")
+
         findings = _findings(report, "human-data-ids")
         assert len(findings) == 1
         assert findings[0].level == "warning"
